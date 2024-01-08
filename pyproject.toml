@@ -1,0 +1,37 @@
+# pyproject.toml
+
+[build-system]
+requires      = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pysteve"
+version = "0.0.1"
+description = "Helper and setup functions for people named Steve"
+authors = [{ name = "Stephen Hilton", email = "Stephen@FamilyHilton.com" }]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["helper", "setup", "boilerplate", "data"]
+dependencies = [
+    "requests >= 2.31.0"
+]
+
+
+[project.optional-dependencies]
+dev = ["pip-tools", "pytest"]
+
+[project.urls]
+Homepage = "https://familyhilton.com"
+Docs = "https://github.com/Stephen-Hilton/pysteve/blob/main/README.md"
+Documentation = "https://github.com/Stephen-Hilton/pysteve/blob/main/README.md"
+Github = "https://github.com/Stephen-Hilton/pysteve"
+
+
+[tool.setuptools.packages.find]
+where = ["src"]  

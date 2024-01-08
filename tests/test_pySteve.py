@@ -183,10 +183,20 @@ def test_load_envfile_to_dict():
     assert pySteve.load_envfile_to_dict(Path(folder / 'my_envfile_{USER}.sh'), 'last')['UUID'] == data3['UUID']
     
     
-    # assert pySteve.load_envfile_to_dict('./tests/testfiles/my_envfile_{latest}.sh') == data
-    
+def test_datetimePlus():
+    dt = pySteve.datetimePlus('2020-12-17')
+    assert dt.calendar_date == '2020-12-17'
+    assert dt.year_of_calendar == 2020
+    assert dt.month_of_year == 12
+    assert dt.day_of_month == 17
+    assert dt.leap_year == True
+    assert dt.day_of_week_name == 'Thursday'
+    assert dt.week_of_month_iso == 3
+    assert dt.first_of_month_iso.strftime(dt.date_format) == '2020-11-29'
+    assert dt.last_of_month_iso.strftime(dt.date_format) == '2021-01-02'
+    assert dt.quarter_of_year_name == '2020 Q4'
+
 
 
 if __name__ == '__main__':
-    test_save_dict_as_envfile()
-    test_load_envfile_to_dict()
+    test_datetimePlus()
