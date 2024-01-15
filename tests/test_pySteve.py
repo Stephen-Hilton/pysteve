@@ -197,6 +197,89 @@ def test_datetimePlus():
     assert dt.quarter_of_year_name == '2020 Q4'
 
 
+def test_chunk_lines():
+    files = sorted([f for f in Path(folder).iterdir() if f.is_file()]) 
+    chunks = pySteve.chunk_lines(files, [ lambda line : str(line).endswith('001.sh')] )
+    assert sum([len(l) for l in chunks]) == len(files)
+
+    filepath = Path(__file__)
+    with open(filepath,'r') as fh:
+        lines = [str(f).rstrip() for f in fh.readlines()]
+    chunks = pySteve.chunk_lines(lines, [ lambda line : str(line).startswith('def ')] )
+    assert sum([len(l) for l in chunks]) == len(lines)
+    assert len(chunks) == len([l for l in lines if str(l).startswith('def ')]) + 1
+
+    lines = ['something zero', 'something else','nada or one', 
+             'NEW SECTION: two', 'section two', 'more stuff',
+             'NEW SECTION: three', 'junk', 'more junk', 'so much junk', 
+             'NEW SECTION: four', 'trash','everywhere trash','last section coming up',
+             'NEW SECTION: pony', 'poo', 'ponies have no concern for where they poo',
+             'NEW SECTION: the last']
+    chunks = pySteve.chunk_lines(lines, [ lambda line : str(line).startswith('NEW SECTION:') ])
+    assert sum([len(l) for l in chunks]) == len(lines)
+    assert len(chunks) == len([l for l in lines if str(l).startswith('NEW SECTION:')]) + 1
+    assert len(chunks) == 6
+    assert len(chunks[2]) == 4
+    assert len([l for l in chunks[0] if 'NEW SECTION:' in l]) == 0 # section before first split
+
+    func1 = lambda line : len([n for n in ['zero', 'one','two','three','four'] if n in str(line)]) >0
+    func2 = lambda line : 'pony' in str(line)
+    chunks = pySteve.chunk_lines(lines, [ func1, func2] )
+    assert sum([len(l) for l in chunks]) == len(lines)
+    assert len(chunks) == 7
+    assert chunks[1] == ['nada or one']
+
+    func3 = lambda line : str(line).startswith('NEW SECTION:')
+    func4 = lambda line : 'ponies' in str(line)
+    chunks = pySteve.chunk_lines(lines, [ func1, func2, func3, func4] )
+    assert sum([len(l) for l in chunks]) == len(lines)
+    assert len(chunks) == 9
+
+
+def test_tokenize_quoted_strings():
+    teststring = 'def test123(val:str="some:value")'
+    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    assert text == 'def test123(val:str={T0})'
+    assert tokens == {'T0':'"some:value"'}
+    assert text.format(T0=tokens['T0']) == teststring
+
+    # real world use-case: parsing python
+    parms = text[text.find('('):][1:-1]
+    assert parms == 'val:str={T0}'
+    assert parms.split(':')[0] == 'val'
+    assert parms.split(':')[1] == 'str={T0}'
+    assert parms.split(':')[1].format(T0=tokens['T0']) == 'str="some:value"'
+
+    teststring = """someimtes "aliens" and "gov't agents" appear and 'borrow' people."""
+    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    assert text == 'someimtes {T0} and {T1} appear and {T2} people.'
+    assert tokens == {'T0':'"aliens"', 'T1':'"gov\'t agents"', 'T2':"'borrow'"}
+    assert text.format(T0=tokens['T0'], T1=tokens['T1'], T2=tokens['T2']) == teststring
+
+    teststring = '""" docstrings """ are a powerful agent for "good"'
+    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    assert text == '{T0} are a powerful agent for {T1}'
+    assert tokens == {'T0':'""" docstrings """', 'T1':'"good"'}
+    assert text.format(T0=tokens['T0'], T1=tokens['T1']) == teststring
+
+    teststring = '""" str="this is a big \'test\'" """'
+    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    assert text == '{T0}'
+    assert tokens == {'T0':'""" str="this is a big \'test\'" """'}
+    assert text.format(T0=tokens['T0']) == teststring
+
+    teststring = "What happens when a quote is 'unresolved by the end?"
+    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    assert text == "What happens when a quote is 'unresolved by the end?"
+    assert tokens == {} # nothing
+    assert text == teststring
+
+
+def test_generate_markdown_doc():
+    srcfiles = Path(Path(__file__).parent.parent / 'src')
+    dstMD = Path(Path(__file__).parent.parent / 'README.md')
+    doc = pySteve.generate_markdown_doc(srcfiles, dstMD)
+    pass
 
 if __name__ == '__main__':
-    test_datetimePlus()
+    test_tokenize_quoted_strings()

@@ -1,4 +1,5 @@
 from pathlib import Path 
+from pprint import pprint
 import inspect
 from datetime import datetime, timedelta
 
@@ -249,6 +250,96 @@ def parse_filename_iterators(folderpath:Path) -> dict:
 
     return {'all_files': all_files, 'base_files':base_files, 'iter_files':iter_files}
 
+
+
+def chunk_lines(list_of_lines:list = [], newchunck_marker_funcs:list = []) -> list:
+    """
+    Breaks a list of string lines into a list of lists of string lines, based on supplied markers.
+    
+    Accepts a list of lines (say, from reading a file) and separates those lines into separate lists 
+    based on boundries discovered by running lines against a list of marker functions (usually lambdas).
+    Each marker function will be passed the line in sequence, and must return a True or False as to 
+    whether the line is the beginning of a new section.  If ANY of the marker functions return True, 
+    the line is considered the first of a new chunk (list of string lines).  At the end, the new list
+    of lists of string lines is returned.   
+    For example: after opening and reading lines of a python file, you could send that list of lines
+    to this function along with the two lambda functions 
+    `  lambda line : str(line).startswith('def')   ` and
+    `  lambda line : str(line).startswith('class') ` to split the list of lines by python functions.
+
+    Args:
+        list_of_lines (list): List of string lines to match markers against and group.
+        newchunck_marker_funcs (list): List of functions, applied to each line to mark new chunk boundries.
+
+    Returns: 
+        list: A list of lists of string lines.
+    """
+    newchunkstarts = []
+    for func in newchunck_marker_funcs:
+        newchunkstarts.extend( [(i,l) for i,l in enumerate(list_of_lines) if func(l) ] )
+    
+    rtn = []
+    chunkstart = 0
+    for chunk in sorted(newchunkstarts):
+        if chunkstart == 0:  rtn.append( list_of_lines[:chunk[0]] )
+        else:                rtn.append( list_of_lines[chunkstart:chunk[0]] )
+        chunkstart = chunk[0]
+    rtn.append( list_of_lines[chunkstart:] ) # get last entry
+    rtn = [r for r in rtn if r != []]
+    return rtn
+    
+
+
+def tokenize_quoted_strings(text:str='') -> (str, dict):
+    """
+    Takes a text string and replaces all quoted segments with a token, then returns a tuple with the tokenized 
+    text and a dictionary of all tokens, for later replacement as needed.
+    """
+    quote_chars = ["'",'"','"""']
+    quote_char = None
+    newchars = []
+    newtoken = []
+    tokens = {}
+    tokenid = 0
+    scoot = 0
+    for i, c in enumerate(list(text)):
+        if scoot >0:
+            scoot -=1
+            continue
+        if c == '"' and text[i:i+3] == '"""': 
+            c = '"""'
+            scoot = 2
+
+        if c in quote_chars:
+            if quote_char is None:  # starting quote
+                quote_char = c
+                newchars.append('{T' + str(tokenid) + '}') 
+
+            elif c == quote_char:  # closing quote
+                quote_char = None
+                newtoken.append(c)
+                c = ''
+                tokens[f'T{tokenid}'] = ''.join(newtoken)
+                tokenid +=1
+                newtoken = []
+
+            else:  # another type of quote inside starting quote
+                pass # we can ignore, as part of the string
+
+        if quote_char: # in a quote:
+            newtoken.append(c)
+        else: # not in a quote
+            newchars.append(c)
+
+    newtext = ''.join(newchars)
+
+    # handle unresolved quotes
+    if newtoken != []: 
+        newtext = newtext.replace('{T'+str(tokenid)+'}', ''.join(newtoken))
+        # tokens[f'T{tokenid}'] = ''.join(newtoken)
+
+    return (newtext, tokens)
+            
 
 
 class datetimePlus():
@@ -528,7 +619,7 @@ class datetimePlus():
 
 def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './README.md', 
                           append:bool = False, include_dunders:bool = False, 
-                          indent_spaces:int = 4) -> str:
+                          py_indent_spaces:int = 4) -> str:
     """
     Parses python files to automatically generate simple markdown documentation.
 
@@ -540,195 +631,144 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
     and structure the mardown files however you'd like.  It also allows for a simple way to auto-generate 
     README.md files, for small projects. 
 
+    Todo: add class support, change source_path to a list of files/folders.
+
     Args: 
         source_path (Path): Path to a file or folder containing .py files with which to create markdown.
         dest_filepath (Path): If specified, will save the markdown string to the file specified.
         append (bool): Whether to append (True) over overwrite (False, default) the dest_filepath.
         include_dunders (bool): Whether to include (True) or exclude (False, default) files beginning with double-underscores (dunders).
-        indent_spaces (int): Number of spaces which constitute a python indent.  Defaults to 4.
+        py_indent_spaces (int): Number of spaces which constitute a python indent.  Defaults to 4.
 
     Returns:
         str: Markdown text generated.
     """
     source_path = Path(source_path).resolve()
     if not source_path.exists(): raise ValueError('Parameter "source_path" must be a valid file or folder.')
-    indent = ' '*indent_spaces
+    indent = ' '*py_indent_spaces
     if source_path.is_file():
         srcfiles = [source_path.resolve()]
     elif source_path.is_dir():
         srcfiles = [f for f in source_path.iterdir() if f.suffix == '.py' and not (include_dunders==False and str(f.stem)[:2] =='__') ]
+
+    # subdef to parse apart docstrings
+    def parse_docstring(docstr:list) -> dict:
+        hdr = []
+        body = []
+        args = []
+        rtn = []
+        examples = []
+        section = 'headline'
+        docstr = [l.replace('"""','').strip() for l in docstr]
+        while len(docstr)>0 and docstr[0]=='': docstr.pop(0)
+        for line in docstr:
+            if section == 'headline' and line !='': hdr.append(line)
+            elif line.strip().lower().startswith('args:'):     section = 'Args'  
+            elif section == 'Args':                            args.append(line)
+            elif line.strip().lower().startswith('returns:'):  section = 'Returns'
+            elif section == 'Returns':                         rtn.append(line)
+            elif line.strip().lower().startswith('examples:'): section = 'Examples'
+            elif section == 'Examples':                        examples.append(line)
+            elif section == 'Body' and line !='':              body.append(line)
+            elif line.strip() != '': 
+                section = 'Body'
+                body.append(line)
+            if line.strip() == '':  section = 'unknown'
+        hdr  = ' '.join(hdr ).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        body = ' '.join(body).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        args = ' '.join(args).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        rtn  = ' '.join(rtn ).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        examples = ' '.join(examples).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        return {'docstr_header': hdr, 'docstr_body': body, 'docstr_args': args, 'docstr_returns': rtn, 'docstr_examples': examples}
+
+    def parse_parms(params:str) -> list:
+        (text, tokens) = tokenize_quoted_strings(params)
+        parms = [p.strip() for p in text.split(',')]
+        rtn = []
+        name = typ = default = None
+        for parmstr in parms:
+            typestart = len(parmstr) if parmstr.find(':')==-1 else parmstr.find(':')
+            defaultstart = len(parmstr) if parmstr.find('=')==-1 else parmstr.find('=')
+            name = parmstr[:min([typestart, defaultstart])].strip()
+            typ = parmstr[typestart+1:defaultstart].strip()
+            default = parmstr[defaultstart+1:].strip()
+            for nm, val in tokens.items():
+                if '{'+nm+'}' in default: 
+                    default = default.replace('{'+nm+'}', val)
+                    parmstr = parmstr.replace('{'+nm+'}', val)
+
+            rtn.append( {'name':name, 'type':typ, 'default':default, 'full':parmstr} )
+        return {'parms': rtn}
         
     # ITERATE all source files found
+    rtn = []
     for file in srcfiles:
         with open(file,'r') as fh:
-            srclines = str(fh.read()).split('\n')
-        
-        defs = []
-        continued_line_def = False
-        continued_line_docstring = False
-        skip_to_line = -1
+            srclines = [str(f).rstrip() for f in str(fh.read()).split('\n') ]
 
-        for li, line in enumerate(srclines):
-            # skip forward lines on demand
-            if li <= skip_to_line: continue
+        sections = []
+        chunks = chunk_lines(srclines, [ lambda line: str(line).startswith('def ') or str(line).startswith('class ') ])
+        for chunk in chunks:
+            chunkstr = ' '.join(chunk)
+            if chunk[0][:4]=='def ': 
+                section = {'type':'def', 'name':str(chunk[0][4:chunk[0].find('(')]) } 
+                parms = chunkstr[chunkstr.find('(')+1:chunkstr.find(')')]
+                docstr_cnt = 0
+                docstr = []
+                for line in chunk:
+                    if '"""' in line: docstr_cnt +=1
+                    if docstr_cnt == 1: docstr.append(line)
+                    if docstr_cnt == 2: 
+                        docstr.append(line)
+                        break 
+                section.update( parse_docstring(docstr) )
+                section.update( parse_parms(parms) )
+            elif chunk[0][:6]=='class ':
+                section = {'type':'class', 'name':str(chunk[0][6:chunk[0].find('(')]) } 
+            else:
+                section = {'type':'other'}
+            sections.append(section)
 
-            # process "def" function/modules:
-            if line.startswith('def ') or continued_line_def: 
-                if line.strip() == '': break
+        # build return string
+        rtn.append(f'# File: {file.name}')
+        rtn.append(f'## Functions:')
+        for section in [s for s in sections if s['type']=='def']:
+            rtn.append(f"### {section['name']}")
+            if section['docstr_header'] !='': rtn.append(f"**{section['docstr_header']}**\n")
+            if section['docstr_body'] !='': rtn.append(f"{section['docstr_body']}")
+            rtn.append(f"#### Arguments:")
+            for parm in section['parms']:
+                rtn.append(f"- {parm['full']}")
+            if len(section['parms']) == 0: rtn.append('- None')
+            if section['docstr_args'] !='': 
+                rtn.append(f"#### Argument Details:")
+                rtn.append(f"- {section['docstr_args']}")
+            if section['docstr_returns'] !='': 
+                rtn.append(f"#### Returns:")
+                rtn.append(f"- {section['docstr_returns']}")
+            if section['docstr_examples'] !='': 
+                rtn.append(f"#### Examples:")
+                rtn.append(f"```python\n{section['docstr_examples']}\n```")    
+            rtn.append('---')
+        rtn.append('---\n'*3 + '\n'*2)
+        rtn = '\n'.join(rtn)
 
-                if not continued_line_def:
-                    cdef = {'name':line.split('(')[0].strip()[3:].strip(), 'returns':'', 'file':file.name, 'line':li, 'args':[], 'docstring':{'line':-1,'body':[] } }
-                    line = line[3:].strip()
-                    line = line.replace(cdef['name'],'').strip()
-
-                    # markers for parsing remainder of parameters
-                    parens = 0
-                    quotetype = ''
-                    isquote = False
-                    segment_type = 'arg name'
-                    segment_text = ''
-                    tokens = []
-                else:
-                    line = line.strip()
-
-                # tokenize remaining values in the arg header
-                for i, char in enumerate(list(line)):
-                    # special handling for 2-char symbol (return type)
-                    if char == '-' and segment_type != 'quote' and list(line)[i+1]=='>': char = '->'
-                    if char == '>' and segment_type != 'quote' and list(line)[i-1]=='-': char = ''
-
-                    match char:
-                        # handle quoted strings
-                        case '"' | "'":
-                            if not isquote: # start of quote 
-                                isquote = True
-                                quotetype = char
-                            elif isquote and char == quotetype: # end of quote
-                                isquote = False
-                                quotetype = ''
-                            segment_text += char 
-
-                        # track paren depth 
-                        case '(': parens +=1
-                        case ')': parens -=1
-
-                        # track different parts of the args
-                        case '->':
-                            tokens.append({'type':segment_type, 'value': segment_text})
-                            segment_type = 'return type'
-                            segment_text = ''
-                        case ',': 
-                            tokens.append({'type':segment_type, 'value': segment_text})
-                            segment_type = 'arg name'
-                            segment_text = ''
-                        case ':': 
-                            tokens.append({'type':segment_type, 'value': segment_text})
-                            segment_type = 'arg type'
-                            segment_text = ''
-                        case '=': 
-                            tokens.append({'type':segment_type, 'value': segment_text})
-                            segment_type = 'arg default'
-                            segment_text = ''
-
-                        case _:
-                            segment_text += char 
-                tokens = [{k:str(v).strip() for k,v in d.items()} for d in tokens]
-                continued_line_def = (i == len(line)-1 and parens != 0)
-
-                # pull tokens back into args, with name/type/default (and def return type)
-                if not continued_line_def:
-                    argi = 0
-                    for token in tokens:
-                        match token['type']:
-                            case 'arg name': 
-                                cdef['args'].append( {'name':token['value'], 'type':'', 'default':''} )
-                                arg = cdef['args'][len(cdef['args'])-1]
-                            case 'arg type':    arg['type'] = token['value']
-                            case 'arg default': arg['default'] = token['value']
-                            case 'return type': cdef['returns'] = token['value']
-
-            # Process DOCSTRINGS (must follow def line and start with """)
-            if (line.strip().startswith('"""') and li == cdef['line']+1):
-                continued_line_docstring = True
-                cdef['docstring']['line'] = li
-                line = line.replace('"""','').strip()
-            if continued_line_docstring: 
-                line = line.replace('"""','').strip()
-                line_p1 = srclines[li+1].replace('"""','').strip()
-                line_p2 = srclines[li+2].replace('"""','').strip()
-                line_m1 = srclines[li-1].replace('"""','').strip()
-
-                # headline: current line is 1 or 2 in docstring, not empty but previous and next lines are (or def line)
-                if (li == cdef['docstring']['line']+0 and line !='' and line_p1=='') or \
-                   (li == cdef['docstring']['line']+1 and line !='' and line_p1=='' and line_m1==''):
-                    line =  f'<b>{line}</b><br>'
-
-                # section headers
-                elif ':' in line:
-                    tmpline = line.strip()
-                    while '  ' in tmpline:
-                        tmpline.replace('  ',' ')
-                    first_colon = tmpline.find(':')
-                    words_before_first_colon = len(tmpline[:first_colon].replace('(','').replace(')','').split(' '))
-
-                    # if stand-alone header
-                    if tmpline.endswith(':') and words_before_first_colon <= 2:
-                        line = f'<h3>{tmpline}</h3>'    
-
-                    # if list of "Name (Type): Value" pairs
-                    elif words_before_first_colon <= 2: # header only
-                        line = f'**{tmpline[:first_colon]}**: {tmpline[first_colon:]}'
-                    
-                if line !='': cdef['docstring']['body'].append( line )
-
-                if line.strip().endswith('"""'): 
-                    continued_line_docstring = False
-                    i = 1
-                    while srclines[li+i].startswith(indent): 
-                        i +=1
-                    skip_to_line = li + i 
-
-            pass
-
-                    
+        if len(dest_filepath) >0:
+            dest_filepath = Path(dest_filepath).resolve()
+            dest_filepath.parent.mkdir(parents=True, exist_ok=True)
+            with dest_filepath.open('a' if append else 'w') as fh:
+                fh.write(rtn) 
+        return rtn
+ 
                 
 
                     
-
-                
-                 
-
-            # Docstrings:
-            # if line.startswith(f'{indent}"""'): 
-                    
-
-        
-
-    pass 
-
-
 
 
 
 if __name__ == '__main__':
 
-
     mdstr = generate_markdown_doc()
-
-    from datetime import datetime
-    from pathlib import Path 
-
-    nowish = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    data = {'USER':'Bob', 'AGE':33, 'HIEGHT':5.89, 'DATETIME':nowish, 'PETS':['fluffy','spot','stinky'] }
-    data2 = data.copy()
-    data2['USER'] = 'Steve'
-    folder = Path( Path( __file__ ).parent.parent / 'tests/testfiles' )
-
-    files = parse_filename_iterators(folderpath=folder)
-
-    rtn = load_envfile_to_dict(Path(folder / 'my_envfile_Bob.sh')) 
-    rtn = load_envfile_to_dict(Path(folder / 'my_envfile_Steve.sh')) 
-    rtn = load_envfile_to_dict(Path(folder / 'my_envfile_{USER}.sh'), 'last')
-    print( data )
-
     pass
+
+ 
