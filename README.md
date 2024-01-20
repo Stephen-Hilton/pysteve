@@ -1,4 +1,6 @@
 # File: pySteve.py
+pySteve is a mish-mash collection of useful functions, rather than an application.  It is particularly useful to people named Steve.
+
 ## Functions:
 ### infer_datatype
 **Infers the primative data types based on value characteristics, and returns a tuple of (type, typed_value). Currently supports float, int, str, and list (with typed elements using recursive calls).**
@@ -58,13 +60,19 @@ Accepts a list of lines (say, from reading a file) and separates those lines int
 - list: A list of lists of string lines.
 ---
 ### tokenize_quoted_strings
-**Takes a text string and replaces all quoted segments with a token, then returns a tuple with the tokenized text and a dictionary of all tokens, for later replacement as needed.**
+**Tokenizes all quoted segments found inside supplied string, and returns the string plus all tokens.**
 
+Returns a tuple with the tokenized string and a dictionary of all tokens, for later replacement as needed. If return_quote_type is True, also returns the quote type with one more nested layer to the return dict, looking like: {"T0": {"text":"'string in quotes, inlcuding quotes', "quote_type":"'"}, "T1":{...}} If return_quote_type is False, returns a slightly more flat structure: {"T0": "'string in quotes, inlcuding quotes'", "T1":...}
 #### Arguments:
 - text:str=''
+- return_quote_type:bool=False
+#### Argument Details:
+- text (str): String including quotes to tokenize. return_quote_type (bool): if True, will also return the type of quote found, if False (default) just returns tokenized text in a flatter dictionary structure.
+#### Returns:
+- tuple (str, dict): the tokenized text as string, and tokens in a dict.
 ---
 ### generate_markdown_doc
-**Parses python files to automatically generate simple markdown documentation.**
+**Parses python files to automatically generate simple markdown documentation (generated this document).**
 
 Parses the file at source_path, or if source_path is a folder, will iterate (alphabetically) thru all .py files and generate markdown content by introspecting all functions, classes, and methods, with a heavy focus on using google-style docstrings. It will always return the markdown as a string, and if the dest_filepath is specified, it will also save to that filename. By default it will replace the dest_filepath, or set append=True to append the markdown to the end. This allows freedom to chose which files /folders to document, and structure the mardown files however you'd like. It also allows for a simple way to auto-generate README.md files, for small projects. Todo: add class support, change source_path to a list of files/folders.
 #### Arguments:

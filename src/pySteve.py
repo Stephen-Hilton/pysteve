@@ -3,6 +3,7 @@ from pprint import pprint
 import inspect
 from datetime import datetime, timedelta
 
+docstring_fileheader="""pySteve is a mish-mash collection of useful functions, rather than an application.  It is particularly useful to people named Steve.""" 
 docstring_marker = 'EOMsg'
 docstring_prefix = f'$(cat << {docstring_marker}\n' 
 docstring_suffix = f'\n{docstring_marker}\n)'
@@ -290,11 +291,24 @@ def chunk_lines(list_of_lines:list = [], newchunck_marker_funcs:list = []) -> li
     
 
 
-def tokenize_quoted_strings(text:str='') -> (str, dict):
+def tokenize_quoted_strings(text:str='', return_quote_type:bool=False) -> (str, dict):
     """
-    Takes a text string and replaces all quoted segments with a token, then returns a tuple with the tokenized 
-    text and a dictionary of all tokens, for later replacement as needed.
+    Tokenizes all quoted segments found inside supplied string, and returns the string plus all tokens.
+
+    Returns a tuple with the tokenized string and a dictionary of all tokens, for later replacement as needed. 
+    If return_quote_type is True, also returns the quote type with one more nested layer to the return dict, looking like:
+    {"T0": {"text":"'string in quotes, inlcuding quotes', "quote_type":"'"}, "T1":{...}}
+    If return_quote_type is False, returns a slightly more flat structure:
+    {"T0": "'string in quotes, inlcuding quotes'", "T1":...}
+
+    Args: 
+        text (str): String including quotes to tokenize.
+        return_quote_type (bool): if True, will also return the type of quote found, if False (default) just returns tokenized text in a flatter dictionary structure.
+
+    Returns: 
+        tuple (str, dict): the tokenized text as string, and tokens in a dict. 
     """
+    text = str(text)
     quote_chars = ["'",'"','"""']
     quote_char = None
     newchars = []
@@ -316,10 +330,10 @@ def tokenize_quoted_strings(text:str='') -> (str, dict):
                 newchars.append('{T' + str(tokenid) + '}') 
 
             elif c == quote_char:  # closing quote
-                quote_char = None
                 newtoken.append(c)
                 c = ''
-                tokens[f'T{tokenid}'] = ''.join(newtoken)
+                tokens[f'T{tokenid}'] = {'text':''.join(newtoken), 'quote_type':quote_char}
+                quote_char = None
                 tokenid +=1
                 newtoken = []
 
@@ -336,11 +350,12 @@ def tokenize_quoted_strings(text:str='') -> (str, dict):
     # handle unresolved quotes
     if newtoken != []: 
         newtext = newtext.replace('{T'+str(tokenid)+'}', ''.join(newtoken))
-        # tokens[f'T{tokenid}'] = ''.join(newtoken)
+    
+    # flatted and remove quote_type, if requested
+    if not return_quote_type: tokens = {n:v['text'] for n,v in tokens.items()}
 
     return (newtext, tokens)
             
-
 
 class datetimePlus():
     date_format = '%Y-%m-%d'
@@ -621,7 +636,7 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
                           append:bool = False, include_dunders:bool = False, 
                           py_indent_spaces:int = 4) -> str:
     """
-    Parses python files to automatically generate simple markdown documentation.
+    Parses python files to automatically generate simple markdown documentation (generated this document).
 
     Parses the file at source_path, or if source_path is a folder, will iterate (alphabetically) thru all .py 
     files and generate markdown content by introspecting all functions, classes, and methods, with a heavy focus
@@ -705,7 +720,15 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
     for file in srcfiles:
         with open(file,'r') as fh:
             srclines = [str(f).rstrip() for f in str(fh.read()).split('\n') ]
-
+        fileprefixline = [l for l in srclines if l.replace(' ','').startswith('docstring_fileheader=')]
+        if len(fileprefixline)>0:
+            fileprefix = fileprefixline[0] 
+            _, fileprefixdict = tokenize_quoted_strings(fileprefix, True)
+            fileprefix = fileprefixdict['T0']['text'].strip()[3:-3] + '\n'
+            srcfiles = [l for l in srclines if fileprefix not in l ] 
+        else: 
+            fileprefix =f"""Functions and classes from the file {file.name}<br>(to customize this text, add the variable to your file: docstring_fileheader = "Some header message" )""" 
+        
         sections = []
         chunks = chunk_lines(srclines, [ lambda line: str(line).startswith('def ') or str(line).startswith('class ') ])
         for chunk in chunks:
@@ -731,6 +754,7 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
 
         # build return string
         rtn.append(f'# File: {file.name}')
+        rtn.append(f'{fileprefix}')
         rtn.append(f'## Functions:')
         for section in [s for s in sections if s['type']=='def']:
             rtn.append(f"### {section['name']}")
@@ -753,7 +777,7 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
         rtn.append('---\n'*3 + '\n'*2)
         rtn = '\n'.join(rtn)
 
-        if len(dest_filepath) >0:
+        if 'PosixPath' in str(type(dest_filepath)):
             dest_filepath = Path(dest_filepath).resolve()
             dest_filepath.parent.mkdir(parents=True, exist_ok=True)
             with dest_filepath.open('a' if append else 'w') as fh:
@@ -768,7 +792,8 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
 
 if __name__ == '__main__':
 
-    mdstr = generate_markdown_doc()
+    mdstr = generate_markdown_doc('./src/pySteve.py', Path('./README.md') )
+    print('done!')
     pass
 
  

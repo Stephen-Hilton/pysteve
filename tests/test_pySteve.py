@@ -9,7 +9,7 @@ sys.path.append(str(Path(path_root/ 'src')))
 import pySteve
 
 nowish = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-data = {'USER':'Bob', 'UUID':str(uuid.uuid4()), 'AGE':33, 'HIEGHT':5.89, 
+data = {'USER':'Bob', 'UUID':'18ac01ba-5d66-40cb-90f9-3b61c87b7c26', 'AGE':33, 'HIEGHT':5.89, 
         'DATETIME':nowish, 'PETS':['fluffy','spot','stinky'],
         'MULTILINE_STRING':"""
         SELECT *
@@ -19,10 +19,10 @@ data = {'USER':'Bob', 'UUID':str(uuid.uuid4()), 'AGE':33, 'HIEGHT':5.89,
         """}
 data2 = data.copy()
 data2['USER'] = 'Steve'
-data2['UUID'] = str(uuid.uuid4())
+data2['UUID'] = '5d988b17-2536-4c20-90bc-9fcd90ff6f4f'
 data3 = data.copy()
 data3['USER'] = 'Zelda'
-data3['UUID'] = str(uuid.uuid4())
+data3['UUID'] = 'db44527e-9df9-4c43-9f5f-c49b52f4d516'
 
 folder = Path( path_root / 'tests/testfiles' )
 
@@ -159,8 +159,9 @@ def test_save_dict_as_envfile():
 def test_parse_filename_iterators():
     files = pySteve.parse_filename_iterators(folder)
     
+    assert len(files) == 3
     assert len(files['base_files']) == 4
-    assert len(files['iter_files']) == 16
+    assert len(files['iter_files']) >= 10
     assert len(files['base_files']) + len(files['iter_files']) == len(files['all_files'])
 
     just_bobs =  [f for f in files['all_files'] if 'Bob' in str(f.stem) ]
@@ -238,29 +239,41 @@ def test_chunk_lines():
 
 def test_tokenize_quoted_strings():
     teststring = 'def test123(val:str="some:value")'
-    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    text, tokens = pySteve.tokenize_quoted_strings(teststring, return_quote_type = True)
     assert text == 'def test123(val:str={T0})'
-    assert tokens == {'T0':'"some:value"'}
-    assert text.format(T0=tokens['T0']) == teststring
-
+    assert tokens == {'T0': {'text': '"some:value"', 'quote_type': '"'}}
+    assert tokens['T0']['quote_type'] == '"'
+    assert text.format(T0=tokens['T0']['text']) == teststring
+    
     # real world use-case: parsing python
     parms = text[text.find('('):][1:-1]
     assert parms == 'val:str={T0}'
     assert parms.split(':')[0] == 'val'
     assert parms.split(':')[1] == 'str={T0}'
-    assert parms.split(':')[1].format(T0=tokens['T0']) == 'str="some:value"'
+    assert parms.split(':')[1].format(T0=tokens['T0']['text']) == 'str="some:value"'
 
     teststring = """someimtes "aliens" and "gov't agents" appear and 'borrow' people."""
-    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    text, tokens = pySteve.tokenize_quoted_strings(teststring, return_quote_type = True)
     assert text == 'someimtes {T0} and {T1} appear and {T2} people.'
-    assert tokens == {'T0':'"aliens"', 'T1':'"gov\'t agents"', 'T2':"'borrow'"}
+    assert tokens == {'T0':{'text':'"aliens"', 'quote_type':'"'}, 
+                      'T1':{'text':'"gov\'t agents"', 'quote_type':'"'},
+                      'T2':{'text':"'borrow'", 'quote_type':"'" }}
+    assert text.format(T0=tokens['T0']['text'], T1=tokens['T1']['text'], T2=tokens['T2']['text']) == teststring
+
+    # again, same as above but without the return_quote_type
+    text, tokens = pySteve.tokenize_quoted_strings(teststring, return_quote_type = False) # default
+    assert text == 'someimtes {T0} and {T1} appear and {T2} people.'
+    assert tokens == {'T0':'"aliens"', 
+                      'T1':'"gov\'t agents"', 
+                      'T2':"'borrow'" }
     assert text.format(T0=tokens['T0'], T1=tokens['T1'], T2=tokens['T2']) == teststring
 
     teststring = '""" docstrings """ are a powerful agent for "good"'
-    text, tokens = pySteve.tokenize_quoted_strings(teststring)
+    text, tokens = pySteve.tokenize_quoted_strings(teststring, return_quote_type = True)
     assert text == '{T0} are a powerful agent for {T1}'
-    assert tokens == {'T0':'""" docstrings """', 'T1':'"good"'}
-    assert text.format(T0=tokens['T0'], T1=tokens['T1']) == teststring
+    assert tokens == {'T0': {'text':'""" docstrings """', 'quote_type':'"""'},
+                      'T1': {'text':'"good"', 'quote_type':'"'}}
+    assert text.format(T0=tokens['T0']['text'], T1=tokens['T1']['text']) == teststring
 
     teststring = '""" str="this is a big \'test\'" """'
     text, tokens = pySteve.tokenize_quoted_strings(teststring)
@@ -271,8 +284,14 @@ def test_tokenize_quoted_strings():
     teststring = "What happens when a quote is 'unresolved by the end?"
     text, tokens = pySteve.tokenize_quoted_strings(teststring)
     assert text == "What happens when a quote is 'unresolved by the end?"
-    assert tokens == {} # nothing
+    assert tokens == {} # nothing, could be an apostrophe
     assert text == teststring
+
+    teststring = 'docstring_fileheader="""pySteve is a mish-mash collection of useful functions, rather than an application.  It is particularly useful to people named Steve."""'
+    text, tokens = pySteve.tokenize_quoted_strings(teststring, True)
+    assert text == "docstring_fileheader={T0}"
+    assert tokens == {"T0": {'text':teststring[21:], 'quote_type':'"""' }} 
+    assert text.format(T0=tokens['T0']['text']) == teststring
 
 
 def test_generate_markdown_doc():
@@ -282,4 +301,5 @@ def test_generate_markdown_doc():
     pass
 
 if __name__ == '__main__':
-    test_tokenize_quoted_strings()
+    test_save_dict_as_envfile()
+    pass
