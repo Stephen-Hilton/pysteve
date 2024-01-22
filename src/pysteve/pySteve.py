@@ -1138,7 +1138,7 @@ def notionapi_get_dataset(api_key:str, notion_id:str, row_limit:int=-1, filter_j
         if has_more: bodydata = '{ "start_cursor": "' + respjson["next_cursor"] + '" }'
         rows.extend(respjson['results'])
         
-        if row_limit != -1 and len(rows) > row_limit: 
+        if row_limit > 0 and len(rows) > row_limit: 
             has_more = False
             rows = rows[:row_limit]
 
