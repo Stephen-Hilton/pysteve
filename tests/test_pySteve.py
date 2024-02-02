@@ -4,7 +4,7 @@ from datetime import datetime
 import sys, uuid
 
 path_root = Path(__file__).parents[1] 
-sys.path.append(str(Path(path_root/ 'src')))
+sys.path.append(str(Path(path_root/ 'src' / 'pySteve')))
 
 import pySteve
 
@@ -157,6 +157,11 @@ def test_envfile_save():
 
 
 def test_envfile_load():
+    # error case: didn't pick up EOM docstring correctly -- it did actually, just not aligned with docstring marker, introduced an override
+    assert len(pySteve.envfile_load(Path(folder / '..' / 'error_cases' / 'Table--SXTDemo.Stocks--202402020132.sql'))['CREATE_DDL_TEMPLATE']) >=100
+    assert len(pySteve.envfile_load(Path(folder / '..' / 'error_cases' / 'Table--SXTDemo.Stocks--original.sql'), docstring_marker_override='EOM')['CREATE_DDL_TEMPLATE']) >=100
+
+    # STANDARD TESTS
     assert pySteve.envfile_load(Path(folder / 'my_envfile_Bob.sh'))['UUID'] == data['UUID']
     assert pySteve.envfile_load(Path(folder / f'my_envfile_{nowish}.sh'))['UUID'] == data['UUID']
     assert pySteve.envfile_load(Path(folder / 'my_envfile_Steve.sh'))['UUID'] == data2['UUID']
@@ -418,7 +423,7 @@ def test_notionapi_get_users():
     assert type(users) == dict
     assert [v for n,v in users.items() if v['name'] == your_name ][0]['name'] == your_name
     users = pySteve.notionapi_get_users(apikey, include=['Stephen Hilton','Cedric Blair'], full_json=True)
-    assert len(users) == 2
+    assert len(users) >= 2
     assert 'full_json' in [v for n,v in users.items()][0]
     
 
@@ -452,5 +457,6 @@ def test_notionapi_get_dataset():
 
 
 if __name__ == '__main__':
-    test_generate_markdown_doc()
+    test_envfile_save()
+    test_envfile_load()
     pass

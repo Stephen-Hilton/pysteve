@@ -4,13 +4,19 @@ from string import Formatter
 import inspect, logging, requests
 from datetime import datetime, timedelta
 
-docstring_fileheader="""pySteve is a mish-mash collection of useful functions, rather than an application.  It is particularly useful to people named Steve.""" 
-docstring_marker = 'EOMsg'
-docstring_prefix = f'$(cat << {docstring_marker}\n' 
-docstring_suffix = f'\n{docstring_marker}\n)'
-
+markdown_fileheader="""pySteve is a mish-mash collection of useful functions, rather than an application.  It is particularly useful to people named Steve.""" 
 notion_standard_headers = { "Notion-Version": "2022-06-28", "content-type": "application/json"}
 
+
+class __docstring__():
+    marker = '__DOCSTRING_BOUNDRY__'
+    def __init__(self, marker:str=None) -> None:
+        if marker: self.marker = marker 
+    @property
+    def prefix(self): return f'$(cat << {self.marker}\n' 
+    @property
+    def suffix(self): return f'\n{self.marker}\n)'
+    
 
 def infer_datatype(value):
     """
@@ -38,8 +44,7 @@ def infer_datatype(value):
     return (str, value)
     
 
-    
-def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6 ) -> Path:
+def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6, docstring_marker_override:str = None) -> Path:
     """
     Always saves a dict as a shell (zsh) as an env-loadable file, adding folders, file iterations and substitutions as needed.
 
@@ -54,6 +59,7 @@ def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6
     Args:
         save_path (Path): Where to save the file, with substitution logic.
         save_dict (dict): Dictionary containing file content.
+        docstring_marker_override (str): Begin/end marker for docstrings. If supplied, overrides the global docstring_marker
 
     Returns: 
         Path: Returns the final save_path used (after substitution and iteration).
@@ -73,6 +79,7 @@ def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6
         suflen = -len(pth.suffix) - len(str(iter)) -1
 
     # iterate dict and build rows
+    docstr = __docstring__(docstring_marker_override)
     lines = []
     for nm, val in save_dict.items():
         if type(val) not in [str, int, float, list]: continue
@@ -83,7 +90,7 @@ def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6
         if '\n' in val: 
             if val[:1]=='\n': val = val[1:]
             val = val.rstrip()
-            nm += f'={docstring_prefix}{val}{docstring_suffix}'
+            nm += f'={docstr.prefix}{val}{docstr.suffix}'
         else: 
             nm += f'={q}{val}{q}'
         lines.append( nm )
@@ -96,18 +103,19 @@ def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6
 
 
 
-def envfile_load(load_path:Path='.', load_path_sorted:str = 'latest', exact_match_only:bool = False) -> dict: 
+def envfile_load(load_path:Path='.', load_path_sort:str = 'latest', exact_match_only:bool = False, docstring_marker_override:str = None) -> dict: 
     """
     Returns a dictionary containing name/value pairs pulled from the supplied .env formatted shell (zsh) script.
 
     If load_path does not have a direct match, it is assumed to be a pattern and will be matched given 
-    supplied template logic (unless exact_match_only = True), and return with the load_path_sorted logic 
-    (first or last).  There are several synonyms: [first | earliest] or [last | latest]
+    supplied template logic (unless exact_match_only = True), and return with the load_path_sort logic 
+    (first or last).  There are several synonyms: [first | earliest | asc] or [last | latest | desc] 
     
     Args:
         load_path (Path): file to load from, with template logic allowed.
-        load_path_sorted (str): If load_path was a template, indicates which file to select, based on filename sort. 
+        load_path_sort (str): If load_path was a template, indicates which file to select, based on filename sort. 
         exact_match_only (bool): Disallow filename templating, and require exact filename only.
+        docstring_marker_override (str): Begin/end marker for docstrings. If supplied, overrides the global docstring_marker
  
     Returns: 
         dict: the dictionary name/value parsed from the supplied file.
@@ -144,7 +152,7 @@ def envfile_load(load_path:Path='.', load_path_sorted:str = 'latest', exact_matc
                 pos += seg['len']
             if keep_file: valid_files.append(file)
 
-        if load_path_sorted[:3] in ['fir', 'ear', 'asc']:
+        if load_path_sort[:3] in ['fir', 'ear', 'asc']:
             pth = Path( pth.parent / valid_files[0] ).resolve()
         else: # last, latest, desc, etc.
             pth = Path( pth.parent / valid_files[len(valid_files)-1] ).resolve()
@@ -154,7 +162,8 @@ def envfile_load(load_path:Path='.', load_path_sorted:str = 'latest', exact_matc
         content = fh.read()
 
     # iter allows next(), ::END:: needed to search for docstring END across newlines
-    lines = iter(content.replace(docstring_suffix,'\n::END::').split('\n')) 
+    docstr = __docstring__(docstring_marker_override)
+    lines = iter(content.replace(docstr.suffix,'\n::END::').split('\n')) 
 
     # loop thru and build dict to control load
     rtn = {}
@@ -164,7 +173,7 @@ def envfile_load(load_path:Path='.', load_path_sorted:str = 'latest', exact_matc
         name  = line[:eq]
         value = line[eq+1:]
         if value[:1]=='"' and value[-1:]=='"': value = value[1:-1]
-        if value.startswith( docstring_prefix.strip() ):
+        if value.startswith( docstr.prefix.strip() ):
             multiline = []
             mline = ''
             while True:
@@ -175,7 +184,7 @@ def envfile_load(load_path:Path='.', load_path_sorted:str = 'latest', exact_matc
         value = infer_datatype(value)[1]
         rtn[name] = value
     rtn['envfile_load--FilePath_Selected'] = str(pth.resolve())
-    rtn = {n:v for n,v in rtn.items() if n.strip()!=''}
+    rtn = {n:v for n,v in rtn.items() if n.strip()!='' and not n.strip().startswith('#')}
     return rtn
 
 
@@ -726,14 +735,14 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
     for file in srcfiles:
         with open(file,'r') as fh:
             srclines = [str(f).rstrip() for f in str(fh.read()).split('\n') ]
-        fileprefixline = [l for l in srclines if l.replace(' ','').startswith('docstring_fileheader=')]
+        fileprefixline = [l for l in srclines if l.replace(' ','').startswith('markdown_fileheader=')]
         if len(fileprefixline)>0:
             fileprefix = fileprefixline[0] 
             _, fileprefixdict = tokenize_quoted_strings(fileprefix, True)
             fileprefix = fileprefixdict['T0']['text'].strip()[3:-3] + '\n'
             srcfiles = [l for l in srclines if fileprefix not in l ] 
         else: 
-            fileprefix =f"""Functions and classes from the file {file.name}<br>(to customize this text, add the variable to your file: docstring_fileheader = "Some header message" )""" 
+            fileprefix =f"""Functions and classes from the file {file.name}<br>(to customize this text, add the variable to your file: markdown_fileheader = "Some header message" )""" 
         
         sections = []
         chunks = chunk_lines(srclines, [ lambda line: str(line).startswith('def ') or str(line).startswith('class ') ])
