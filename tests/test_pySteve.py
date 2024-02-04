@@ -1,6 +1,6 @@
 from pathlib import Path 
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import sys, uuid
 
 path_root = Path(__file__).parents[1] 
@@ -28,13 +28,58 @@ folder = Path( path_root / 'tests/testfiles' )
 
 
 def test_infer_datatype():
-    assert pySteve.infer_datatype(123) == (int, 123)
+    # python
+    assert pySteve.infer_datatype(123)   == (int, 123)
     assert pySteve.infer_datatype('123') == (int, 123)
-    assert pySteve.infer_datatype(123.456) == (float, 123.456)
+    assert pySteve.infer_datatype(123.456)   == (float, 123.456)
     assert pySteve.infer_datatype('123.456') == (float, 123.456)
-    assert pySteve.infer_datatype('toy boat') == (str, 'toy boat')
+    assert pySteve.infer_datatype('toy boat')   == (str, 'toy boat')
     assert pySteve.infer_datatype('"toy boat"') == (str, 'toy boat')
     assert pySteve.infer_datatype('[1, 3, 5, "seven"]') == (list, [1,3,5,'seven'] )
+    assert pySteve.infer_datatype('2024-12-31') == (datetime, datetime(2024, 12, 31, 0, 0))
+    assert pySteve.infer_datatype('1974-10-15') == (datetime, datetime(1974, 10, 15, 0, 0))
+    assert pySteve.infer_datatype('1974-15-10') == (str, '1974-15-10')
+    assert pySteve.infer_datatype('2024-09-10 11:12:13') == (datetime, datetime(2024, 9, 10, 11, 12, 13))
+    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999') == (datetime, datetime(2024, 8, 15, 23, 59, 59, 999999))
+    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999+08:00') == (datetime, datetime(2024, 8, 15, 23, 59, 59, 999999, tzinfo=timezone(timedelta(seconds=28800))))
+
+    # sql
+    assert pySteve.infer_datatype(123, 'SQL')   == (int, 123, 'TINYINT')
+    assert pySteve.infer_datatype('123', 'SQL') == (int, 123, 'TINYINT')
+    assert pySteve.infer_datatype(12345, 'SQL')   == (int, 12345, 'SMALLINT')
+    assert pySteve.infer_datatype(123456, 'SQL')   == (int, 123456, 'INTEGER')
+    assert pySteve.infer_datatype(123456789, 'SQL')   == (int, 123456789, 'INTEGER')
+    assert pySteve.infer_datatype(12345678901, 'SQL')   == (int, 12345678901, 'BIGINT')    
+    assert pySteve.infer_datatype(1234567890123456789, 'SQL')   == (int, 1234567890123456789, 'BIGINT')    
+    assert pySteve.infer_datatype(123.456, 'SQL')   == (float, 123.456, 'DECIMAL(6,3)')
+    assert pySteve.infer_datatype('123.456', 'SQL') == (float, 123.456, 'DECIMAL(6,3)')
+    assert pySteve.infer_datatype('123456789.123', 'SQL') == (float, 123456789.123, 'DECIMAL(12,3)')
+    assert pySteve.infer_datatype('toy boat', 'SQL')   == (str, 'toy boat', 'VARCHAR(8)')
+    assert pySteve.infer_datatype('"toy boat"', 'SQL') == (str, 'toy boat', 'VARCHAR(8)')
+    assert pySteve.infer_datatype('[1, 3, 5, "seven"]', 'SQL') == (list, [1, 3, 5, 'seven'], 'VARCHAR(18)')
+    assert pySteve.infer_datatype('2024-12-31', 'SQL') == (datetime, datetime(2024, 12, 31, 0, 0), 'DATE')
+    assert pySteve.infer_datatype('1974-10-15', 'SQL') == (datetime, datetime(1974, 10, 15, 0, 0), 'DATE')
+    assert pySteve.infer_datatype('1974-15-10', 'SQL') == (str, '1974-15-10', 'VARCHAR(10)')
+    assert pySteve.infer_datatype('2024-09-10 11:12:13', 'SQL') ==(datetime, datetime(2024, 9, 10, 11, 12, 13), 'TIMESTAMP')
+    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999', 'SQL') ==(datetime, datetime(2024, 8, 15, 23, 59, 59, 999999), 'TIMESTAMP')
+    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999+08:00', 'SQL') ==(datetime, datetime(2024, 8, 15, 23, 59, 59, 999999, tzinfo=timezone(timedelta(seconds=28800))), 'TIMESTAMP')
+    assert pySteve.infer_datatype('2024-01-15T07:59:40.053+00:00', 'SQL') ==(datetime, datetime(2024, 1, 15, 7, 59, 40, 53000, tzinfo=timezone(timedelta(seconds=0))), 'TIMESTAMP')
+
+
+def test_datatype_py2sql():
+    assert pySteve.datatype_py2sql(str, 'sample data') == 'VARCHAR(11)'
+    assert pySteve.datatype_py2sql(str, 'sample data'*2) == 'VARCHAR(22)'
+    assert pySteve.datatype_py2sql(str, 'sample data'*5) == 'VARCHAR(55)'
+    assert pySteve.datatype_py2sql(int, 15) == 'TINYINT'
+    assert pySteve.datatype_py2sql(int, 127) == 'TINYINT'
+    assert pySteve.datatype_py2sql(int, 128) == 'SMALLINT'
+    assert pySteve.datatype_py2sql(int, 12345) == 'SMALLINT'
+    assert pySteve.datatype_py2sql(int, 32767) == 'SMALLINT'
+    assert pySteve.datatype_py2sql(int, 32768) == 'INTEGER'
+    assert pySteve.datatype_py2sql(int, 123456789) == 'INTEGER'
+    assert pySteve.datatype_py2sql(int, 2147483647 ) == 'INTEGER'
+    assert pySteve.datatype_py2sql(int, 2147483648 ) == 'BIGINT'
+    assert pySteve.datatype_py2sql(int, 1234567890987654321 ) == 'BIGINT'
 
 
 def test_parse_placeholders():
@@ -457,6 +502,5 @@ def test_notionapi_get_dataset():
 
 
 if __name__ == '__main__':
-    test_envfile_save()
-    test_envfile_load()
+    test_infer_datatype()
     pass

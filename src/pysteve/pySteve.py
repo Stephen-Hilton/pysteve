@@ -18,31 +18,87 @@ class __docstring__():
     def suffix(self): return f'\n{self.marker}\n)'
     
 
-def infer_datatype(value):
+def infer_datatype(value, syntax='python'):
     """
     Infers the primative data types based on value characteristics, and returns a tuple of (type, typed_value).
-    Currently supports float, int, str, and list (with typed elements using recursive calls).
+    Currently supports float, int, str, datetime (iso8601), and list (with typed elements using recursive calls).
     """
     value = str(value)
+    rtn = ()
 
     if value.replace('.','').isnumeric(): 
         if '.' in value: 
-            return (float, float(value))
+            rtn = (float, float(value))
         else:
-            return (int, int(value))
+            rtn = (int, int(value))
         
-    if value.startswith('[') and value.endswith(']'):
-        value = [v.strip() for v in value[1:-1].split(',')]
-        for i,v in enumerate(value):
-            value[i] = v.strip()
-            value[i] = infer_datatype(value[i])[1]
-        return (list, value)
+    elif value.startswith('[') and value.endswith(']'):
+        values = [v.strip() for v in value[1:-1].split(',')]
+        for i,v in enumerate(values):
+            values[i] = v.strip()
+            values[i] = infer_datatype(values[i])[1]
+        rtn = (list, values)
     
-    if (value.startswith('"') and value.endswith('"')) or \
+    elif value[:2] in['20','19'] and (value.replace('-','').replace('/','')[:8]).isnumeric:
+        rawvalue = value.replace('-','').replace('/','').replace(':','').replace(' ','').replace('T','')
+        rawvalueTZ = '' 
+        if '+' in rawvalue: 
+            rawvalueTZ = rawvalue.split('+')[1]
+            rawvalue = rawvalue.split('+')[0]
+        if  rawvalue[4:6].isnumeric() and int(rawvalue[4:6]) <= 12 and \
+            rawvalue[6:8].isnumeric() and int(rawvalue[6:8]) <= 31:
+            fmt = ''
+            if len(rawvalue) == 8: fmt = '%Y%m%d'
+            elif len(rawvalue) == 14: fmt = '%Y%m%d%H%M%S'
+            elif 14 < len(rawvalue) <= 24 and '.' in rawvalue: fmt = '%Y%m%d%H%M%S.%f'
+            else: 
+                rtn = (str, value) # give up and call it a string
+            if len(rawvalueTZ) != 0: 
+                fmt += '%z'
+                rawvalue += f'+{rawvalueTZ}'
+        else:
+            rtn = (str, value) # invalid iso8601 date format
+
+        if rtn == ():  rtn = (datetime, datetime.strptime(rawvalue, fmt))
+    
+    elif (value.startswith('"') and value.endswith('"')) or \
        (value.startswith("'") and value.endswith("'")):
         value = value[1:-1]
-    return (str, value)
+
+    if rtn == (): rtn = (str, value) # str as default
+
+    if syntax.lower() in ['sql','db','database']:
+        rtn = ( rtn[0], rtn[1], datatype_py2sql(rtn[0], value) )
+
+    return rtn
     
+
+def datatype_py2sql(pytype:type, sample_data=None) ->str:
+    if pytype == str: 
+        if len(sample_data) >0: 
+            return f'VARCHAR({len(sample_data)})'
+        else:
+            return f'VARCHAR'
+    if pytype == int: 
+        if len(str(sample_data))==0: return 'INTEGER'
+        if   abs(int(sample_data)) <= ((2**(8*1))/2)-1: return 'TINYINT'
+        elif abs(int(sample_data)) <= ((2**(8*2))/2)-1: return 'SMALLINT'
+        elif abs(int(sample_data)) <= ((2**(8*4))/2)-1: return 'INTEGER'
+        else: return 'BIGINT'
+    if pytype == float: 
+        if len(sample_data)==0: return f'DECIMAL(18,2)'
+        dec = len(str(sample_data).split('.')[0])
+        if dec==0: dec=1
+        pre = 0 if '.' not in sample_data else len(str(sample_data).split('.')[1])
+        return f'DECIMAL({dec+pre},{pre})'
+    if pytype == datetime:
+        if len(sample_data) <=12:
+            return 'DATE'
+        else:
+            return 'TIMESTAMP'
+    return f'VARCHAR({len(sample_data)})'
+
+     
 
 def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6, docstring_marker_override:str = None) -> Path:
     """
@@ -100,7 +156,6 @@ def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6
         fh.write( '\n'.join(lines) )
 
     return Path(pth)
-
 
 
 def envfile_load(load_path:Path='.', load_path_sort:str = 'latest', exact_match_only:bool = False, docstring_marker_override:str = None) -> dict: 
@@ -186,7 +241,6 @@ def envfile_load(load_path:Path='.', load_path_sort:str = 'latest', exact_match_
     rtn['envfile_load--FilePath_Selected'] = str(pth.resolve())
     rtn = {n:v for n,v in rtn.items() if n.strip()!='' and not n.strip().startswith('#')}
     return rtn
-
 
 
 def parse_placeholders(value:str = '', wrappers:str = '{}' ):
@@ -1194,12 +1248,11 @@ def notionapi_get_dataset(api_key:str, notion_id:str, row_limit:int=-1, filter_j
 
 
 if __name__ == '__main__':
-    env = envfile_load('.')
-    apikey = notion_get_api_key(envfile=env)
-
-    users = notionapi_get_users(apikey)
-    tablename, rows, keypairs, coldefs = notionapi_get_dataset(apikey, env['NOTION_CRM_ACCOUNT'], 10)
-    print('done!')
+    
+    for x in ['a','1',1,[1], '2024-01-31']:
+        print('PY:   ', x, '==', infer_datatype(x))
+        print('SQL:  ', x, '==', infer_datatype(x,'sql'))
+    
     pass
 
  

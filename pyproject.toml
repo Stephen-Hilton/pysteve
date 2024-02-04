@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pysteve"
-version = "0.0.9"
+version = "0.0.12"
 description = "Helper and setup functions for people named Steve"
 authors = [{ name = "Stephen Hilton", email = "Stephen@FamilyHilton.com" }]
 readme = "README.md"
