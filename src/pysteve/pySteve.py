@@ -970,6 +970,7 @@ def db_safe_name(original_column_name:str, reserved_word_prefix:str=None, **rese
     def __safechars__(original_column_name:str):
         rtn = original_column_name.strip().replace(' ','_').replace('-','_')
         rtn = [c for c in rtn if c.isalnum() or c=='_']
+        if rtn[0] == '_' and original_column_name[0] != '_': rtn.pop(0)
         if rtn[0].isnumeric(): rtn.insert(0,'_')
         rtn = str(''.join(rtn))
         while '__' in rtn:
