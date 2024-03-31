@@ -1,5 +1,6 @@
 # pySteve specific
 tests/testfiles
+tests/logs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

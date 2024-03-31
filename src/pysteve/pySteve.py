@@ -1,43 +1,124 @@
 from pathlib import Path 
 from pprint import pprint
-import inspect
+from string import Formatter
+import inspect, logging, requests
 from datetime import datetime, timedelta
 
-docstring_fileheader="""pySteve is a mish-mash collection of useful functions, rather than an application.  It is particularly useful to people named Steve.""" 
-docstring_marker = 'EOMsg'
-docstring_prefix = f'$(cat << {docstring_marker}\n' 
-docstring_suffix = f'\n{docstring_marker}\n)'
+markdown_fileheader="""pySteve is a mish-mash collection of useful functions, rather than an application.  It is particularly useful to people named Steve.""" 
+notion_standard_headers = { "Notion-Version": "2022-06-28", "content-type": "application/json"}
 
 
+class __docstring__():
+    marker = '__DOCSTRING_BOUNDRY__'
+    def __init__(self, marker:str=None) -> None:
+        if marker: self.marker = marker 
+    @property
+    def prefix(self): return f'$(cat << {self.marker}\n' 
+    @property
+    def suffix(self): return f'\n{self.marker}\n)'
+    
 
-def infer_datatype(value):
+def infer_datatype(value, add_sqltype:bool = False):
     """
     Infers the primative data types based on value characteristics, and returns a tuple of (type, typed_value).
-    Currently supports float, int, str, and list (with typed elements using recursive calls).
+    Currently supports float, int, str, datetime (iso8601), and list (with typed elements using recursive calls).
+    If add_sqltype is True, adds the SQL type to the end of the tuple.
     """
     value = str(value)
+    rtn = ()
 
-    if value.replace('.','').isnumeric(): 
-        if '.' in value: 
-            return (float, float(value))
-        else:
-            return (int, int(value))
+    if value.replace('.','').replace('e','').replace('-','').replace('+','').isnumeric() and \
+       value[:1].isnumeric() and value[-1:].isnumeric() and \
+       len(value)-len(value.replace('-','')) <2 and \
+       len(value)-len(value.replace('e','')) <2 and \
+       len(value)-len(value.replace('+','')) <2 and \
+       len(value)-len(value.replace('.','')) <2 : # likely numeric
         
-    if value.startswith('[') and value.endswith(']'):
-        value = [v.strip() for v in value[1:-1].split(',')]
-        for i,v in enumerate(value):
-            value[i] = v.strip()
-            value[i] = infer_datatype(value[i])[1]
-        return (list, value)
+        # handle scientific notation:
+        if 'e' in value: 
+            numary = value.replace('+','').split('e')
+            exp = 10**(float(numary[1]))
+            num = float(numary[0])
+            value = '{:40f}'.format(num*exp).strip()
+
+        if '.' in value: 
+            while value[-2:]=='00': value = value[:-1]
+            rtn = (float, float(value))
+        else:
+            rtn = (int, int(value))
+        
+    elif value.startswith('[') and value.endswith(']'):
+        values = [v.strip() for v in value[1:-1].split(',')]
+        for i,v in enumerate(values):
+            values[i] = v.strip()
+            values[i] = infer_datatype(values[i])[1]
+        rtn = (list, values)
     
-    if (value.startswith('"') and value.endswith('"')) or \
+    elif value[:2] in['20','19'] and (value.replace('-','').replace('/','')[:8]).isnumeric:
+        rawvalue = value.replace('-','').replace('/','').replace(':','').replace(' ','').replace('T','')
+        rawvalueTZ = '' 
+        if '+' in rawvalue: 
+            rawvalueTZ = rawvalue.split('+')[1]
+            rawvalue = rawvalue.split('+')[0]
+        if  rawvalue[4:6].isnumeric() and int(rawvalue[4:6]) <= 12 and \
+            rawvalue[6:8].isnumeric() and int(rawvalue[6:8]) <= 31:
+            fmt = ''
+            if len(rawvalue) == 8: fmt = '%Y%m%d'
+            elif len(rawvalue) == 14: fmt = '%Y%m%d%H%M%S'
+            elif 14 < len(rawvalue) <= 24 and '.' in rawvalue: fmt = '%Y%m%d%H%M%S.%f'
+            else: 
+                rtn = (str, value) # give up and call it a string
+            if len(rawvalueTZ) != 0: 
+                fmt += '%z'
+                rawvalue += f'+{rawvalueTZ}'
+        else:
+            rtn = (str, value) # invalid iso8601 date format
+
+        if rtn == ():  rtn = (datetime, datetime.strptime(rawvalue, fmt))
+    
+    elif (value.startswith('"') and value.endswith('"')) or \
        (value.startswith("'") and value.endswith("'")):
         value = value[1:-1]
-    return (str, value)
+
+    if rtn == (): rtn = (str, value) # str as default
+
+    if add_sqltype: rtn = ( rtn[0], rtn[1], datatype_py2sql(rtn[0], value) )
+
+    return rtn
     
 
-    
-def save_dict_as_envfile(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6 ) -> Path:
+def datatype_py2sql (pytype:type, sample_data=None) -> str:
+    """
+    Given a python datatype, returns the corresponding SQL datatype as string.  If sample_data is
+    provided, it will attempt match characteristics such as string length, precision, integer sizing, etc.
+    """
+    if pytype == str: 
+        if len(sample_data) >0: 
+            return f'VARCHAR({len(sample_data)})'
+        else:
+            return f'VARCHAR'
+    if pytype == int: 
+        if len(str(sample_data))==0: return 'INTEGER' # default
+        if   abs(int(sample_data)) <= ((2**(8*1))/2)-1: return 'TINYINT'
+        elif abs(int(sample_data)) <= ((2**(8*2))/2)-1: return 'SMALLINT'
+        elif abs(int(sample_data)) <= ((2**(8*4))/2)-1: return 'INTEGER'
+        else: return 'BIGINT'
+    if pytype == float: 
+        if len(sample_data)==0: return f'DECIMAL(18,2)'
+        dec = len(str(sample_data).split('.')[0])
+        if dec==0: dec=1
+        pre = 0 if '.' not in sample_data else len(str(sample_data).split('.')[1])
+        return f'DECIMAL({dec+pre},{pre})'
+    if pytype == datetime:
+        if len(sample_data) <=12:
+            return 'DATE'
+        else:
+            return 'TIMESTAMP'
+    return f'VARCHAR({len(sample_data)})'
+
+
+
+def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6, docstring_marker_override:str = None) -> Path:
     """
     Always saves a dict as a shell (zsh) as an env-loadable file, adding folders, file iterations and substitutions as needed.
 
@@ -52,6 +133,7 @@ def save_dict_as_envfile(save_path:Path, save_dict:dict = {}, iteration_zero_pad
     Args:
         save_path (Path): Where to save the file, with substitution logic.
         save_dict (dict): Dictionary containing file content.
+        docstring_marker_override (str): Begin/end marker for docstrings. If supplied, overrides the global docstring_marker
 
     Returns: 
         Path: Returns the final save_path used (after substitution and iteration).
@@ -71,6 +153,7 @@ def save_dict_as_envfile(save_path:Path, save_dict:dict = {}, iteration_zero_pad
         suflen = -len(pth.suffix) - len(str(iter)) -1
 
     # iterate dict and build rows
+    docstr = __docstring__(docstring_marker_override)
     lines = []
     for nm, val in save_dict.items():
         if type(val) not in [str, int, float, list]: continue
@@ -81,7 +164,7 @@ def save_dict_as_envfile(save_path:Path, save_dict:dict = {}, iteration_zero_pad
         if '\n' in val: 
             if val[:1]=='\n': val = val[1:]
             val = val.rstrip()
-            nm += f'={docstring_prefix}{val}{docstring_suffix}'
+            nm += f'={docstr.prefix}{val}{docstr.suffix}'
         else: 
             nm += f'={q}{val}{q}'
         lines.append( nm )
@@ -94,18 +177,19 @@ def save_dict_as_envfile(save_path:Path, save_dict:dict = {}, iteration_zero_pad
 
 
 
-def load_envfile_to_dict(load_path:Path, return_sorted:str = 'latest', exact_match_only:bool = False) -> dict: 
+def envfile_load(load_path:Path='.', load_path_sort:str = 'latest', exact_match_only:bool = False, docstring_marker_override:str = None) -> dict: 
     """
     Returns a dictionary containing name/value pairs pulled from the supplied .env formatted shell (zsh) script.
 
     If load_path does not have a direct match, it is assumed to be a pattern and will be matched given 
-    supplied template logic (unless exact_match_only = True), and return with the return_sorted logic 
-    (first or last).  There are several synonyms: [first | earliest] or [last | latest]
+    supplied template logic (unless exact_match_only = True), and return with the load_path_sort logic 
+    (first or last).  There are several synonyms: [first | earliest | asc] or [last | latest | desc] 
     
     Args:
         load_path (Path): file to load from, with template logic allowed.
-        return_sorted (str): if template matched, 
-        exact_match_only (bool): skip the first/last logic, and require exact filename match
+        load_path_sort (str): If load_path was a template, indicates which file to select, based on filename sort. 
+        exact_match_only (bool): Disallow filename templating, and require exact filename only.
+        docstring_marker_override (str): Begin/end marker for docstrings. If supplied, overrides the global docstring_marker
  
     Returns: 
         dict: the dictionary name/value parsed from the supplied file.
@@ -113,6 +197,9 @@ def load_envfile_to_dict(load_path:Path, return_sorted:str = 'latest', exact_mat
     """
     if not load_path: raise ValueError(f'load_path must be specified, you provided: {load_path}')
     pth = Path(load_path).resolve()
+
+    if pth.is_dir(): 
+        pth = Path(pth / '.env')
 
     if not pth.exists(): # do load_path template logic
         filename = pth.name
@@ -139,7 +226,7 @@ def load_envfile_to_dict(load_path:Path, return_sorted:str = 'latest', exact_mat
                 pos += seg['len']
             if keep_file: valid_files.append(file)
 
-        if return_sorted[:3] in ['fir', 'ear', 'asc']:
+        if load_path_sort[:3] in ['fir', 'ear', 'asc']:
             pth = Path( pth.parent / valid_files[0] ).resolve()
         else: # last, latest, desc, etc.
             pth = Path( pth.parent / valid_files[len(valid_files)-1] ).resolve()
@@ -149,7 +236,8 @@ def load_envfile_to_dict(load_path:Path, return_sorted:str = 'latest', exact_mat
         content = fh.read()
 
     # iter allows next(), ::END:: needed to search for docstring END across newlines
-    lines = iter(content.replace(docstring_suffix,'\n::END::').split('\n')) 
+    docstr = __docstring__(docstring_marker_override)
+    lines = iter(content.replace(docstr.suffix,'\n::END::').split('\n')) 
 
     # loop thru and build dict to control load
     rtn = {}
@@ -159,7 +247,7 @@ def load_envfile_to_dict(load_path:Path, return_sorted:str = 'latest', exact_mat
         name  = line[:eq]
         value = line[eq+1:]
         if value[:1]=='"' and value[-1:]=='"': value = value[1:-1]
-        if value.startswith( docstring_prefix.strip() ):
+        if value.startswith( docstr.prefix.strip() ):
             multiline = []
             mline = ''
             while True:
@@ -169,7 +257,8 @@ def load_envfile_to_dict(load_path:Path, return_sorted:str = 'latest', exact_mat
             value = '\n'.join(multiline)
         value = infer_datatype(value)[1]
         rtn[name] = value
-    rtn['load_envfile_to_dict--FilePath_Selected'] = str(pth.resolve())
+    rtn['envfile_load--FilePath_Selected'] = str(pth.resolve())
+    rtn = {n:v for n,v in rtn.items() if n.strip()!='' and not n.strip().startswith('#')}
     return rtn
 
 
@@ -691,9 +780,9 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
             if line.strip() == '':  section = 'unknown'
         hdr  = ' '.join(hdr ).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
         body = ' '.join(body).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
-        args = ' '.join(args).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
-        rtn  = ' '.join(rtn ).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
-        examples = ' '.join(examples).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        args = '\n - '.join([r for r in args if len(r)>0]).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        rtn  = '\n - '.join([r for r in rtn if len(r)>0] ).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
+        examples = '\n - '.join([r for r in examples if len(r)>0]).replace('  ',' ').replace('  ',' ').replace('  ',' ').strip()
         return {'docstr_header': hdr, 'docstr_body': body, 'docstr_args': args, 'docstr_returns': rtn, 'docstr_examples': examples}
 
     def parse_parms(params:str) -> list:
@@ -720,18 +809,18 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
     for file in srcfiles:
         with open(file,'r') as fh:
             srclines = [str(f).rstrip() for f in str(fh.read()).split('\n') ]
-        fileprefixline = [l for l in srclines if l.replace(' ','').startswith('docstring_fileheader=')]
+        fileprefixline = [l for l in srclines if l.replace(' ','').startswith('markdown_fileheader=')]
         if len(fileprefixline)>0:
             fileprefix = fileprefixline[0] 
             _, fileprefixdict = tokenize_quoted_strings(fileprefix, True)
             fileprefix = fileprefixdict['T0']['text'].strip()[3:-3] + '\n'
             srcfiles = [l for l in srclines if fileprefix not in l ] 
         else: 
-            fileprefix =f"""Functions and classes from the file {file.name}<br>(to customize this text, add the variable to your file: docstring_fileheader = "Some header message" )""" 
+            fileprefix =f"""Functions and classes from the file {file.name}<br>(to customize this text, add the variable to your file: markdown_fileheader = "Some header message" )""" 
         
         sections = []
         chunks = chunk_lines(srclines, [ lambda line: str(line).startswith('def ') or str(line).startswith('class ') ])
-        for chunk in chunks:
+        for chunk in sorted(chunks):
             chunkstr = ' '.join(chunk)
             if chunk[0][:4]=='def ': 
                 section = {'type':'def', 'name':str(chunk[0][4:chunk[0].find('(')]) } 
@@ -786,14 +875,413 @@ def generate_markdown_doc(source_path:Path = './src', dest_filepath:Path = './RE
  
                 
 
-                    
+def substitute_dict_in_string(text:str='', sub_dict:dict={}, date_delim:str='', time_delim:str='', datetime_delim:str='_') -> str:
+    """
+    Substitutes dictionary '{name}' with 'value' in provided string.
+
+    This performs a basic string substitution of any "{name}" in a supplied dictionary with the corresponding
+    'value' and returns the post-substitution string, doing a basic text.format(**sub_dict).  The reason for 
+    this function is a list of pre-loaded values that are also included, such as various filename-safe flavors
+    of time.  The time format is always decending in granularity, i.e. Year, Month, Day, Hour, Minute, Second.
+    Any of the pre-configured '{name}' values can be overwritten with the supplied dictionary. For example,
+    the preloaded substitution {now} will turn into a timestamp, but if sub_dict contains {'now':'pizza'} then
+    the preloaded substitution is ignored and instead {now} becomes pizza.
+
+    Args:
+        text (str): The string to perform the substitution around.
+        sub_dict (dict): Dictionary containing the name/value pairs to substitute.
+        date_delim (str): Character(s) used between year, month, and date. 
+        time_delim (str): Character(s) used between hour, minute, and second. 
+        datetime_delim (str): Character(s) used between the date and time component.
+
+    Return:
+        str: the post-substitution string. 
+    """
+    subdict = {'datetime':datetime.now().strftime(f'%Y{date_delim}%m{date_delim}%d{datetime_delim}%H{time_delim}%M{time_delim}%S'),
+               'date':datetime.now().strftime(f'%Y{date_delim}%m{date_delim}%d'),
+               'today':datetime.now().strftime(f'%Y{date_delim}%m{date_delim}%d'),
+               'time':datetime.now().strftime(f'%H{time_delim}%M{time_delim}%S'),
+               'now':datetime.now().strftime(f'%Y{date_delim}%m{date_delim}%d{datetime_delim}%H{time_delim}%M{time_delim}%S') }
+    subdict.update(sub_dict)
+    expectedNames = [fname for _, fname, _, _ in Formatter().parse(text) if fname] # add back in any missing expected names
+    subdict.update({k:f'{{{k}}}' for k in expectedNames if k not in subdict.keys()})
+    rtn = text.format(**subdict)
+    return rtn 
+               
+
+
+def dict_soft_update(dict_main:dict, dict_addifmissing:dict={}) -> dict:
+    """
+    Simply adds one dictionary to another like a dict.update(), except it will NOT overwrite values if found in dict_main.
+    """
+    dict_main.update({n:v for n,v in dict_addifmissing.items() if n not in dict_main.keys()})
+    return dict_main
+
+
+
+def logger_setup(application_name:str=None, console_level=logging.INFO, filepath_level=logging.DEBUG, 
+                 filepath:Path='./logs/{datetime}--{application_name}.log', **kwargs) ->  logging.Logger:
+    """
+    Sets up a logger in a consistent, default way with both stream(console) and file handlers.
+
+    Args:
+        application_name (str): Name of the application logger. Leave None for root logger. 
+        console_level (logging.level): Logging level for stream handler (debug, info, warning, error). Set None to disable.
+        filepath_level (logging.level): Logging level for file handler  (debug, info, warning, error). Set None to disable.
+        filepath (Path): Path location for the file handler log files, supporting substitutions. Set None to disable.
+        kwargs:  Any other keyword arguments are treated as {name} = value substitions for the filepath, if enabled.
+
+    Returns: 
+        (logger): a reference to the logging object. 
+    """
+    logger = logging.getLogger(application_name)
+    frmt = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s','%Y-%m-%d_%H:%M:%S')
+    logger.setLevel(logging.DEBUG)
+
+    if console_level:
+        streamhandler = logging.StreamHandler()
+        streamhandler.setFormatter(frmt)
+        streamhandler.setLevel(console_level)
+        logger.addHandler(streamhandler)
+
+    if filepath_level and filepath:    
+        subdict = {'application_name':application_name if application_name else 'root'}
+        subdict.update(**kwargs)
+        filepath = Path(substitute_dict_in_string( str(Path(filepath).resolve()), subdict))
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filehandler = logging.FileHandler(filename=filepath)
+        filehandler.setFormatter(frmt)
+        filehandler.setLevel(filepath_level)
+        logger.addHandler(filehandler)
+
+    logger.preferred_format = frmt
+    return logger 
+
+
+
+def db_safe_name(original_column_name:str, reserved_word_prefix:str=None, **reserved_words) -> str:
+    """
+    Accepts a string and returns a DB column safe string, absent special characters, and substitute reserved words if provided a list.
+
+    The **kwargs (called **reserved_words_subs) will be added to the reserved word substitution dictionary, 
+    allowing for custom reserved word overrides. For example, for Notion Inserts you may want to translate
+    the columns:  parent='Parent_ID', object='Object_Type'    
+    """
+    def __safechars__(original_column_name:str):
+        rtn = original_column_name.strip().replace(' ','_').replace('-','_')
+        rtn = [c for c in rtn if c.isalnum() or c=='_']
+        if rtn[0].isnumeric(): rtn.insert(0,'_')
+        rtn = str(''.join(rtn))
+        while '__' in rtn:
+            rtn = rtn.replace('__','_')
+        return rtn 
+    
+    colname = __safechars__(original_column_name)
+
+    # build reserved word list
+    reserved_words = {n.lower():v for n,v in reserved_words.items() if n.lower() == colname.lower() }
+    if len(reserved_words) > 0: 
+        return __safechars__(reserved_words[colname.lower()])
+    
+    common_reserved_words = ['type','object','date','time','from','to','int','integer'] 
+    if colname.lower() in common_reserved_words: 
+        reserved_word_prefix = reserved_word_prefix if reserved_word_prefix else '_'
+        return __safechars__(f'{reserved_word_prefix}{colname}')
+
+    return colname
+
+
+
+def notion_translate_type(notion_type:str, decimal_precision:int=2, varchar_size:int=None, **kwargs) -> dict:
+    """
+    Translates notion datatypes into other system data types, like python or DBs. Also indicates whether 
+    the notion type is considered an object (needing further drill-downs) or a primative type (like str or int).
+
+    The returned dictionary object will have several entries: "db" for database translation, "py" for python, 
+    "pk" for the notion primary key field of that object type, and "obj" boolean as to whether the data type 
+    returns an object that requires additional drill-downs. For example, a notion "page" is an object that can 
+    contain other types, whereas "text" is a primative data type.  The type map can be extended real-time using 
+    the **kwargs.
+
+    Args: 
+        notion_type (str): Notion dataset type (text, user, status, page, etc.).
+        decimal_precision (int): For types that translate into DB type Decimal, this sets the precision. Omitted if None.
+        varchar_size (int): For types that translate into DB type Varchar, this sets the size. Omitted if None.
+        kwargs: Added to the typemap, if adheres to the format name={"pk":"...", "db":"...", "py":"...", "obj":bool }
+
+    Returns: 
+        dict: Dictionary with various type translations for the notion type provided. The "py" return contains actual types.
+    """
+    varchar_size = '' if not varchar_size else f'({varchar_size})'
+    decimal_precision = '' if not decimal_precision else f'(18,{decimal_precision})'
+    typemap = {'multi_select': {'pk':'name',    'db':f'varchar{varchar_size}',      'py':str,      'obj':True  },       
+               'select':       {'pk':'name',    'db':f'varchar{varchar_size}',      'py':str,      'obj':False },        
+               'status':       {'pk':'name',    'db':f'varchar{varchar_size}',      'py':str,      'obj':False },    
+               'user':         {'pk':'id',      'db':f'varchar{varchar_size}',      'py':str,      'obj':True  },  
+               'person':       {'pk':'email',   'db':f'varchar{varchar_size}',      'py':str,      'obj':False },  
+               'page':         {'pk':'id',      'db':f'varchar{varchar_size}',      'py':str,      'obj':True  },     
+               'relation':     {'pk':'id',      'db':f'varchar{varchar_size}',      'py':str,      'obj':True  },     
+               'text':         {'pk':'content', 'db':f'varchar{varchar_size}',      'py':str,      'obj':False },  
+               'date':         {'pk':'start',   'db':'date'                  ,      'py':datetime, 'obj':False },          
+               'number':       {'pk':'number',  'db':f'decimal{decimal_precision}', 'py':float,    'obj':False }
+               }  
+    typemap.update(**kwargs)
+    if notion_type in typemap: 
+        return typemap[notion_type]
+    else: 
+        raise KeyError(f'notion_type supplied ("{notion_type}") does not exist in the notion type map. Try one of the following: {", ".join([t for t in typemap.keys()])}')
+    
+
+        
+def notion_translate_value(proptype, propobject) -> (str, list, bool):
+    """Given a Notion object from the API source, return the value as a string as well as a list.
+    Also returns a bool value indicating whether the list value contains multiple discrete items 
+    (say, a multi-select type) or just multiple parts of one discrete object (say, rich-text type)."""
+    if propobject == '': return '', [], False
+    parts = []
+    if proptype == 'text': 
+        strobj = propobject['plain_text'].strip()
+        return strobj, [strobj], False
+    elif proptype in ['status','select']: 
+        return propobject['name'], [propobject['name']], False
+    elif proptype == 'multi_select':
+        parts = [p['name'] for p in propobject]
+        return ', '.join(parts), parts, True
+    elif proptype == 'relation': 
+        parts = [p['id'] for p in propobject]
+        return ', '.join(parts), parts, True
+    elif proptype == 'date': 
+        return propobject['start'], [propobject['start']], False
+    elif proptype in ['string','checkbox','email','url','phone_number']:
+        return str(propobject), [propobject], False 
+    elif proptype in ['number']:
+        return str(propobject), [propobject], False 
+    elif proptype == 'page': 
+        return str(propobject['id']), [propobject['id']], False
+    elif proptype == 'mention':
+        parttype = propobject[propobject['type']]['type']
+        if parttype in ['page']:
+            return notion_translate_value(parttype, propobject[propobject['type']][parttype])
+        else:    
+            return notion_translate_value(parttype, [propobject[propobject['type']][parttype]])
+    elif proptype in ['rich_text', 'title']:
+        for part in propobject: 
+            parttype = part['type'] if 'type' in part else 'unknown'
+            s, l, m = notion_translate_value(parttype, part)
+            parts.extend(l)
+        parts = [p for p in parts if p !='']
+        return ', '.join(parts), parts, False
+    elif proptype in ['people','user']:
+        for part in propobject:
+            if 'object' in part and 'type' in part and part['object']=='user' and part['type']=='person':
+                parts.append(part['name'])
+            else:
+                parts.append(part['id'])
+        return ', '.join(parts), parts, True
+    elif proptype == 'formula':
+        parttype = propobject['type']
+        s, parts, m = notion_translate_value(parttype, propobject[parttype])
+        return s, parts, False
+    elif proptype[-4:] == 'time':
+        strobj = propobject.strip()
+        return strobj, [strobj], False
+    else:
+        strobj = str(propobject).strip()
+        return strobj, [strobj], False
+        
+    
+
+
+def notion_get_api_key(api_key:str=None, envfile='.') -> str:
+    """
+    Sets and/or returns the Notion API Key, either directly from from an envfile.
+
+    Args:
+        api_key (str): Notion API Key for connecting account.
+        envfile (Path|str|dict): Either the path to an envfile, or a dictionary as produced by envfile_load()
+
+    Returns:
+        str: The Notion API Key as provided, or parsed from env file.
+    """
+    if api_key: return api_key
+    if envfile: 
+        try:
+            if type(envfile)==str or 'Path' in str(type(envfile)):
+                env = envfile_load(envfile)
+            elif type(envfile)==dict:
+                env = envfile
+            name = ''
+            for nm in ['NOTION_API_KEY', 'NOTION_KEY']:
+                if nm in env: name=nm 
+                if nm.lower() in env: name=nm.lower()
+                if nm.replace('_','') in env: name=nm.replace('_','')
+                if nm.replace('_','').lower() in env: name=nm.replace('_','').lower()
+                if name !='': break 
+            return env[name]
+        except Exception as ex:
+            pass 
+    return None
+
+
+
+def notionapi_get_users(api_key:str, include:list = ['all'], full_json:bool = False, **headers):
+    """
+    Query Notion and return a set of all users in the organization, with optional ability to 'include' only certain users by name.
+    """
+    if len(include)==0: include = ['all']
+    if 'Authorization' not in headers: headers['Authorization'] =  f"Bearer {api_key}"
+    headers.update({n:v for n,v in notion_standard_headers.items() if n not in headers.keys()})
+    
+    resp = requests.get("https://api.notion.com/v1/users", headers=headers)
+    resp.raise_for_status()
+
+    users = {}
+    for obj in resp.json()['results']:
+        if obj['object'] == 'user' and obj['type'] == 'person':
+            users[ obj['id'] ] = { 'id': obj['id'], 'name': obj['name'], 'email': obj['person']['email'] }
+            if full_json: users[ obj['id'] ]['full_json'] = obj
+
+    # apply filter
+    users = {k:v for k,v in users.items() if v['name'].lower() in [n.lower() for n in include] or 'all' in include }
+    return users 
+
+
+
+def notionapi_get_dataset_info(api_key:str, notion_id:str, **headers) -> (str,dict):
+    """--------------------
+    Retrieves database and column information from a notion dataset (table).
+
+    You must setup an Integration and add datasets, otherwise you'll get a "not authorized" error, even 
+    with a valid API Key. For more information, see:  
+    https://developers.notion.com/docs/create-a-notion-integration#create-your-integration-in-notion
+
+    Args:
+        api_key (str): A valid Notion API Key.
+        notion_id (str): The Notion ID for the data table you're trying to access.
+        **headers (kwargs): Any name/value pairs provided will be added to the API request header.
+    
+    Returns:
+        str: Title of database (table)
+        dict: Column name mapping between Notion (key) and DB (value)
+    """
+    # get database / table name and high-level information
+    url = f'https://api.notion.com/v1/databases/{notion_id}'
+    if 'Authorization' not in headers: headers['Authorization'] =  f"Bearer {api_key}"
+    headers.update({n:v for n,v in notion_standard_headers.items() if n not in headers.keys()})
+
+    hdrresp = requests.get(url=url, headers=headers)
+    hdrresp.raise_for_status()
+    hdrrespjson = hdrresp.json()
+    tabletitle = ' '.join([h['plain_text'] for h in hdrrespjson['title']])
+    tabletitle_singular = tabletitle[:-1] if tabletitle[-1:] == 's' else tabletitle
+    # grab ID for db_table:
+    columns = [ {'notion_name':'id', 'db_name':f'{tabletitle_singular}_id', 'order':0, 'notion_type':f'id', 'db_type':'varchar' } ]
+    for col, val in hdrrespjson['properties'].items():
+        coldb = db_safe_name(col, tabletitle_singular, parent='Parent_ID', object='Object_Type')
+        typ = val['type']
+        typdb = db_safe_name(typ)
+        columns.append( {'notion_name':col, 'db_name':coldb, 'notion_type':typ, 'db_type':typdb, 'order':500 } )
+    for col, typ in [('parent', 'varchar'),('object', 'varchar'),('url', 'varchar'),
+                        ('public_url', 'varchar'),('created_time', 'timestamp'),('created_by', 'varchar'),
+                        ('last_edited_time', 'timestamp'),('last_edited_by', 'varchar')]:
+        coldb = db_safe_name(col, tabletitle_singular, parent='Parent_ID', object='Object_Type')
+        columns.append ({ 'notion_name':col, 'db_name':coldb, 'notion_type':'text', 'db_type':typ, 'order':999 })
+    return tabletitle, columns
+
+
+
+def notionapi_get_dataset(api_key:str, notion_id:str, row_limit:int=-1, filter_json:dict = {}, **headers):
+    """
+    Connect to Notion and retrieve a dataset (aka table, aka database) by NotionID. 
+
+    You must setup an Integration and add datasets, otherwise you'll get a "not authorized" error, even 
+    with a valid API Key. For more information, see:  
+    https://developers.notion.com/docs/create-a-notion-integration#create-your-integration-in-notion
+
+    Args: 
+        api_key (str): A valid Notion API Key.
+        notion_id (str): The Notion ID for the data table you're trying to access.
+        row_limit (int): The number of rows to return. To get all rows, set to -1 (default)
+        filter_json (dict): The API filter object. See: https://developers.notion.com/reference/post-database-query-filter
+        **headers (kwargs): Any name/value pairs provided will be added to the API request header.
+
+    Returns:
+        tuple: ('Name of table', [{rows as tabular data}], [{rows as key/value pairs}], [{column definitions}] )
+
+    """
+    if 'Authorization' not in headers: headers['Authorization'] =  f"Bearer {api_key}"
+    headers.update({n:v for n,v in notion_standard_headers.items() if n not in headers.keys()})
+    url = f'https://api.notion.com/v1/databases/{notion_id}/query'
+
+    # get dataset tablename and column definitions:
+    tabletitle, columndefinitions = notionapi_get_dataset_info(api_key, notion_id)
+
+    # pull all data records (in groups of 100):
+    has_more = True 
+    bodydata = {}
+    rows = []
+    while has_more: 
+        resp = requests.post(url=url, headers=headers, json=filter_json, data=bodydata)
+        resp.raise_for_status()
+
+        respjson = resp.json()
+        has_more = bool(respjson['has_more'])
+        if has_more: bodydata = '{ "start_cursor": "' + respjson["next_cursor"] + '" }'
+        rows.extend(respjson['results'])
+        
+        if row_limit > 0 and len(rows) > row_limit:  
+            # only true if hit user defined limit, rather than EOF
+            has_more = False
+            rows = rows[:row_limit]
+
+    # structure rows for return
+    multiset_rows = []
+    newrows = []
+
+    for row in rows:
+        # first load all the top-level properties, notion-required and normally not visible:
+        newrow =   {f'id':row['id'], 
+                    'parent_id':row['parent']['database_id'],
+                    'object_type':row['object'],
+                    'url':row['url'], 
+                    'public_url':row['public_url'],
+                    'created_time':row['created_time'],
+                    'created_by':row['created_by']['id'],
+                    'last_edited_time':row['last_edited_time'],
+                    'last_edited_by':row['last_edited_by']['id']
+                    }
+        
+        # now loop thru properties and add:
+        for propname, fullpropvalue in row['properties'].items():
+
+            proptype = fullpropvalue['type']
+            propvalue = '' if not fullpropvalue[proptype] else fullpropvalue[proptype]
+            
+            valstr, vallist, is_multiset = notion_translate_value(proptype, propvalue)
+            newrow[propname] = valstr 
+
+            if is_multiset:
+                for val in vallist:
+                    multiset_rows.append( 
+                        {'Notion_DBName':tabletitle, 
+                        'ColumnName':propname,
+                        'ColumnType':proptype,
+                        'RowID':row['id'],
+                        'CellValue':str(val),
+                        'CellCount':len(vallist)} )
+            
+        newrows.append(newrow)
+
+    return tabletitle, newrows, multiset_rows, columndefinitions
 
 
 
 if __name__ == '__main__':
-
-    mdstr = generate_markdown_doc('./src/pySteve.py', Path('./README.md') )
-    print('done!')
+    
+    for x in [ '1.8e-05', 2.9e16, 3.34462e+05, 'a','1',1,[1], '2024-01-31',]:
+        # print('PY:   ', x, '==', infer_datatype(x))
+        print('SQL:  ', x, '==', infer_datatype(x,'sql'))
+    
     pass
 
  
