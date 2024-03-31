@@ -18,16 +18,31 @@ class __docstring__():
     def suffix(self): return f'\n{self.marker}\n)'
     
 
-def infer_datatype(value, syntax='python'):
+def infer_datatype(value, add_sqltype:bool = False):
     """
     Infers the primative data types based on value characteristics, and returns a tuple of (type, typed_value).
     Currently supports float, int, str, datetime (iso8601), and list (with typed elements using recursive calls).
+    If add_sqltype is True, adds the SQL type to the end of the tuple.
     """
     value = str(value)
     rtn = ()
 
-    if value.replace('.','').isnumeric(): 
+    if value.replace('.','').replace('e','').replace('-','').replace('+','').isnumeric() and \
+       value[:1].isnumeric() and value[-1:].isnumeric() and \
+       len(value)-len(value.replace('-','')) <2 and \
+       len(value)-len(value.replace('e','')) <2 and \
+       len(value)-len(value.replace('+','')) <2 and \
+       len(value)-len(value.replace('.','')) <2 : # likely numeric
+        
+        # handle scientific notation:
+        if 'e' in value: 
+            numary = value.replace('+','').split('e')
+            exp = 10**(float(numary[1]))
+            num = float(numary[0])
+            value = '{:40f}'.format(num*exp).strip()
+
         if '.' in value: 
+            while value[-2:]=='00': value = value[:-1]
             rtn = (float, float(value))
         else:
             rtn = (int, int(value))
@@ -67,20 +82,23 @@ def infer_datatype(value, syntax='python'):
 
     if rtn == (): rtn = (str, value) # str as default
 
-    if syntax.lower() in ['sql','db','database']:
-        rtn = ( rtn[0], rtn[1], datatype_py2sql(rtn[0], value) )
+    if add_sqltype: rtn = ( rtn[0], rtn[1], datatype_py2sql(rtn[0], value) )
 
     return rtn
     
 
-def datatype_py2sql(pytype:type, sample_data=None) ->str:
+def datatype_py2sql (pytype:type, sample_data=None) -> str:
+    """
+    Given a python datatype, returns the corresponding SQL datatype as string.  If sample_data is
+    provided, it will attempt match characteristics such as string length, precision, integer sizing, etc.
+    """
     if pytype == str: 
         if len(sample_data) >0: 
             return f'VARCHAR({len(sample_data)})'
         else:
             return f'VARCHAR'
     if pytype == int: 
-        if len(str(sample_data))==0: return 'INTEGER'
+        if len(str(sample_data))==0: return 'INTEGER' # default
         if   abs(int(sample_data)) <= ((2**(8*1))/2)-1: return 'TINYINT'
         elif abs(int(sample_data)) <= ((2**(8*2))/2)-1: return 'SMALLINT'
         elif abs(int(sample_data)) <= ((2**(8*4))/2)-1: return 'INTEGER'
@@ -98,7 +116,7 @@ def datatype_py2sql(pytype:type, sample_data=None) ->str:
             return 'TIMESTAMP'
     return f'VARCHAR({len(sample_data)})'
 
-     
+
 
 def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6, docstring_marker_override:str = None) -> Path:
     """
@@ -156,6 +174,7 @@ def envfile_save(save_path:Path, save_dict:dict = {}, iteration_zero_pad:int = 6
         fh.write( '\n'.join(lines) )
 
     return Path(pth)
+
 
 
 def envfile_load(load_path:Path='.', load_path_sort:str = 'latest', exact_match_only:bool = False, docstring_marker_override:str = None) -> dict: 
@@ -241,6 +260,7 @@ def envfile_load(load_path:Path='.', load_path_sort:str = 'latest', exact_match_
     rtn['envfile_load--FilePath_Selected'] = str(pth.resolve())
     rtn = {n:v for n,v in rtn.items() if n.strip()!='' and not n.strip().startswith('#')}
     return rtn
+
 
 
 def parse_placeholders(value:str = '', wrappers:str = '{}' ):
@@ -1020,47 +1040,55 @@ def notion_translate_value(proptype, propobject) -> (str, list, bool):
     if propobject == '': return '', [], False
     parts = []
     if proptype == 'text': 
-        return propobject['plain_text'].strip(), [propobject['plain_text'].strip()], False
-    if proptype in ['status','select']: 
+        strobj = propobject['plain_text'].strip()
+        return strobj, [strobj], False
+    elif proptype in ['status','select']: 
         return propobject['name'], [propobject['name']], False
-    if proptype == 'multi_select':
+    elif proptype == 'multi_select':
         parts = [p['name'] for p in propobject]
         return ', '.join(parts), parts, True
-    if proptype == 'relation': 
+    elif proptype == 'relation': 
         parts = [p['id'] for p in propobject]
         return ', '.join(parts), parts, True
-    if proptype == 'date': 
+    elif proptype == 'date': 
         return propobject['start'], [propobject['start']], False
-    if proptype in ['string','checkbox','email','url','phone_number']:
+    elif proptype in ['string','checkbox','email','url','phone_number']:
         return str(propobject), [propobject], False 
-    if proptype in ['number']:
+    elif proptype in ['number']:
         return str(propobject), [propobject], False 
-    if proptype == 'page': 
+    elif proptype == 'page': 
         return str(propobject['id']), [propobject['id']], False
-    if proptype == 'mention':
+    elif proptype == 'mention':
         parttype = propobject[propobject['type']]['type']
         if parttype in ['page']:
             return notion_translate_value(parttype, propobject[propobject['type']][parttype])
         else:    
             return notion_translate_value(parttype, [propobject[propobject['type']][parttype]])
-    if proptype in ['rich_text', 'title']:
+    elif proptype in ['rich_text', 'title']:
         for part in propobject: 
             parttype = part['type'] if 'type' in part else 'unknown'
             s, l, m = notion_translate_value(parttype, part)
             parts.extend(l)
         parts = [p for p in parts if p !='']
         return ', '.join(parts), parts, False
-    if proptype in ['people','user']:
+    elif proptype in ['people','user']:
         for part in propobject:
             if 'object' in part and 'type' in part and part['object']=='user' and part['type']=='person':
                 parts.append(part['name'])
             else:
                 parts.append(part['id'])
         return ', '.join(parts), parts, True
-    if proptype == 'formula':
+    elif proptype == 'formula':
         parttype = propobject['type']
         s, parts, m = notion_translate_value(parttype, propobject[parttype])
         return s, parts, False
+    elif proptype[-4:] == 'time':
+        strobj = propobject.strip()
+        return strobj, [strobj], False
+    else:
+        strobj = str(propobject).strip()
+        return strobj, [strobj], False
+        
     
 
 
@@ -1201,56 +1229,57 @@ def notionapi_get_dataset(api_key:str, notion_id:str, row_limit:int=-1, filter_j
         if has_more: bodydata = '{ "start_cursor": "' + respjson["next_cursor"] + '" }'
         rows.extend(respjson['results'])
         
-        if row_limit > 0 and len(rows) > row_limit: 
+        if row_limit > 0 and len(rows) > row_limit:  
+            # only true if hit user defined limit, rather than EOF
             has_more = False
             rows = rows[:row_limit]
 
     # structure rows for return
-        multiset_rows = []
-        newrows = []
+    multiset_rows = []
+    newrows = []
 
-        for row in rows:
-            # first load all the top-level properties, notion-required and normally not visible:
-            newrow =   {f'id':row['id'], 
-                        'parent_id':row['parent']['database_id'],
-                        'object_type':row['object'],
-                        'url':row['url'], 
-                        'public_url':row['public_url'],
-                        'created_time':row['created_time'],
-                        'created_by':row['created_by']['id'],
-                        'last_edited_time':row['last_edited_time'],
-                        'last_edited_by':row['last_edited_by']['id']
-                        }
+    for row in rows:
+        # first load all the top-level properties, notion-required and normally not visible:
+        newrow =   {f'id':row['id'], 
+                    'parent_id':row['parent']['database_id'],
+                    'object_type':row['object'],
+                    'url':row['url'], 
+                    'public_url':row['public_url'],
+                    'created_time':row['created_time'],
+                    'created_by':row['created_by']['id'],
+                    'last_edited_time':row['last_edited_time'],
+                    'last_edited_by':row['last_edited_by']['id']
+                    }
+        
+        # now loop thru properties and add:
+        for propname, fullpropvalue in row['properties'].items():
+
+            proptype = fullpropvalue['type']
+            propvalue = '' if not fullpropvalue[proptype] else fullpropvalue[proptype]
             
-            # now loop thru properties and add:
-            for propname, fullpropvalue in row['properties'].items():
+            valstr, vallist, is_multiset = notion_translate_value(proptype, propvalue)
+            newrow[propname] = valstr 
 
-                proptype = fullpropvalue['type']
-                propvalue = '' if not fullpropvalue[proptype] else fullpropvalue[proptype]
-                
-                valstr, vallist, is_multiset = notion_translate_value(proptype, propvalue)
-                newrow[propname] = valstr 
+            if is_multiset:
+                for val in vallist:
+                    multiset_rows.append( 
+                        {'Notion_DBName':tabletitle, 
+                        'ColumnName':propname,
+                        'ColumnType':proptype,
+                        'RowID':row['id'],
+                        'CellValue':str(val),
+                        'CellCount':len(vallist)} )
+            
+        newrows.append(newrow)
 
-                if is_multiset:
-                    for val in vallist:
-                        multiset_rows.append( 
-                            {'Notion_DBName':tabletitle, 
-                            'ColumnName':propname,
-                            'ColumnType':proptype,
-                            'RowID':row['id'],
-                            'CellValue':str(val),
-                            'CellCount':len(vallist)} )
-                
-            newrows.append(newrow)
+    return tabletitle, newrows, multiset_rows, columndefinitions
 
-        return tabletitle, newrows, multiset_rows, columndefinitions
-    
 
 
 if __name__ == '__main__':
     
-    for x in ['a','1',1,[1], '2024-01-31']:
-        print('PY:   ', x, '==', infer_datatype(x))
+    for x in [ '1.8e-05', 2.9e16, 3.34462e+05, 'a','1',1,[1], '2024-01-31',]:
+        # print('PY:   ', x, '==', infer_datatype(x))
         print('SQL:  ', x, '==', infer_datatype(x,'sql'))
     
     pass

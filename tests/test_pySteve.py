@@ -9,6 +9,7 @@ sys.path.append(str(Path(path_root/ 'src' / 'pySteve')))
 import pySteve
 
 nowish = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+print(nowish)
 data = {'USER':'Bob', 'UUID':'18ac01ba-5d66-40cb-90f9-3b61c87b7c26', 'AGE':33, 'HIEGHT':5.89, 
         'DATETIME':nowish, 'PETS':['fluffy','spot','stinky'],
         'MULTILINE_STRING':"""
@@ -33,6 +34,12 @@ def test_infer_datatype():
     assert pySteve.infer_datatype('123') == (int, 123)
     assert pySteve.infer_datatype(123.456)   == (float, 123.456)
     assert pySteve.infer_datatype('123.456') == (float, 123.456)
+    assert pySteve.infer_datatype(1.8e-5) == (float, 1.8e-05)
+    assert pySteve.infer_datatype('1.8e-5') == (float, 1.8e-05)
+    assert pySteve.infer_datatype('1.8e-5') == (float, 0.000018)
+    assert pySteve.infer_datatype('1.8e+5') == (float, 180000.0)
+    assert pySteve.infer_datatype('1.8e05') == (float, 180000.0)
+    assert pySteve.infer_datatype('1.8e5') == (float, 180000.0)
     assert pySteve.infer_datatype('toy boat')   == (str, 'toy boat')
     assert pySteve.infer_datatype('"toy boat"') == (str, 'toy boat')
     assert pySteve.infer_datatype('[1, 3, 5, "seven"]') == (list, [1,3,5,'seven'] )
@@ -44,26 +51,33 @@ def test_infer_datatype():
     assert pySteve.infer_datatype('2024-08-15 23:59:59.999999+08:00') == (datetime, datetime(2024, 8, 15, 23, 59, 59, 999999, tzinfo=timezone(timedelta(seconds=28800))))
 
     # sql
-    assert pySteve.infer_datatype(123, 'SQL')   == (int, 123, 'TINYINT')
-    assert pySteve.infer_datatype('123', 'SQL') == (int, 123, 'TINYINT')
-    assert pySteve.infer_datatype(12345, 'SQL')   == (int, 12345, 'SMALLINT')
-    assert pySteve.infer_datatype(123456, 'SQL')   == (int, 123456, 'INTEGER')
-    assert pySteve.infer_datatype(123456789, 'SQL')   == (int, 123456789, 'INTEGER')
-    assert pySteve.infer_datatype(12345678901, 'SQL')   == (int, 12345678901, 'BIGINT')    
-    assert pySteve.infer_datatype(1234567890123456789, 'SQL')   == (int, 1234567890123456789, 'BIGINT')    
-    assert pySteve.infer_datatype(123.456, 'SQL')   == (float, 123.456, 'DECIMAL(6,3)')
-    assert pySteve.infer_datatype('123.456', 'SQL') == (float, 123.456, 'DECIMAL(6,3)')
-    assert pySteve.infer_datatype('123456789.123', 'SQL') == (float, 123456789.123, 'DECIMAL(12,3)')
-    assert pySteve.infer_datatype('toy boat', 'SQL')   == (str, 'toy boat', 'VARCHAR(8)')
-    assert pySteve.infer_datatype('"toy boat"', 'SQL') == (str, 'toy boat', 'VARCHAR(8)')
-    assert pySteve.infer_datatype('[1, 3, 5, "seven"]', 'SQL') == (list, [1, 3, 5, 'seven'], 'VARCHAR(18)')
-    assert pySteve.infer_datatype('2024-12-31', 'SQL') == (datetime, datetime(2024, 12, 31, 0, 0), 'DATE')
-    assert pySteve.infer_datatype('1974-10-15', 'SQL') == (datetime, datetime(1974, 10, 15, 0, 0), 'DATE')
-    assert pySteve.infer_datatype('1974-15-10', 'SQL') == (str, '1974-15-10', 'VARCHAR(10)')
-    assert pySteve.infer_datatype('2024-09-10 11:12:13', 'SQL') ==(datetime, datetime(2024, 9, 10, 11, 12, 13), 'TIMESTAMP')
-    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999', 'SQL') ==(datetime, datetime(2024, 8, 15, 23, 59, 59, 999999), 'TIMESTAMP')
-    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999+08:00', 'SQL') ==(datetime, datetime(2024, 8, 15, 23, 59, 59, 999999, tzinfo=timezone(timedelta(seconds=28800))), 'TIMESTAMP')
-    assert pySteve.infer_datatype('2024-01-15T07:59:40.053+00:00', 'SQL') ==(datetime, datetime(2024, 1, 15, 7, 59, 40, 53000, tzinfo=timezone(timedelta(seconds=0))), 'TIMESTAMP')
+    assert pySteve.infer_datatype(123, True)   == (int, 123, 'TINYINT')
+    assert pySteve.infer_datatype('123', True) == (int, 123, 'TINYINT')
+    assert pySteve.infer_datatype(12345, True)   == (int, 12345, 'SMALLINT')
+    assert pySteve.infer_datatype(123456, True)   == (int, 123456, 'INTEGER')
+    assert pySteve.infer_datatype(123456789, True)   == (int, 123456789, 'INTEGER')
+    assert pySteve.infer_datatype(12345678901, True)   == (int, 12345678901, 'BIGINT')    
+    assert pySteve.infer_datatype(1234567890123456789, True)   == (int, 1234567890123456789, 'BIGINT')    
+    assert pySteve.infer_datatype(123.456, True)   == (float, 123.456, 'DECIMAL(6,3)')
+    assert pySteve.infer_datatype('123.456', True) == (float, 123.456, 'DECIMAL(6,3)')
+    assert pySteve.infer_datatype('123456789.123', True) == (float, 123456789.123, 'DECIMAL(12,3)')
+    assert pySteve.infer_datatype(1.8e-5, True) == (float, 1.8e-05, 'DECIMAL(7,6)')
+    assert pySteve.infer_datatype('1.8e-5', True) == (float, 1.8e-05, 'DECIMAL(7,6)')
+    assert pySteve.infer_datatype('1.8e-5', True) == (float, 0.000018, 'DECIMAL(7,6)')
+    assert pySteve.infer_datatype('1.8e+5', True) == (float, 180000.0, 'DECIMAL(7,1)')
+    assert pySteve.infer_datatype('1.8e05', True) == (float, 180000.0, 'DECIMAL(7,1)')
+    assert pySteve.infer_datatype('1.8e5', True) == (float, 180000.0, 'DECIMAL(7,1)')
+    assert pySteve.infer_datatype(355/113*1e50, True) == (float, 3.1415929203539832e+50, 'DECIMAL(52,1)')
+    assert pySteve.infer_datatype('toy boat', True)   == (str, 'toy boat', 'VARCHAR(8)')
+    assert pySteve.infer_datatype('"toy boat"', True) == (str, 'toy boat', 'VARCHAR(8)')
+    assert pySteve.infer_datatype('[1, 3, 5, "seven"]', True) == (list, [1, 3, 5, 'seven'], 'VARCHAR(18)')
+    assert pySteve.infer_datatype('2024-12-31', True) == (datetime, datetime(2024, 12, 31, 0, 0), 'DATE')
+    assert pySteve.infer_datatype('1974-10-15', True) == (datetime, datetime(1974, 10, 15, 0, 0), 'DATE')
+    assert pySteve.infer_datatype('1974-15-10', True) == (str, '1974-15-10', 'VARCHAR(10)')
+    assert pySteve.infer_datatype('2024-09-10 11:12:13', True) ==(datetime, datetime(2024, 9, 10, 11, 12, 13), 'TIMESTAMP')
+    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999', True) ==(datetime, datetime(2024, 8, 15, 23, 59, 59, 999999), 'TIMESTAMP')
+    assert pySteve.infer_datatype('2024-08-15 23:59:59.999999+08:00', True) ==(datetime, datetime(2024, 8, 15, 23, 59, 59, 999999, tzinfo=timezone(timedelta(seconds=28800))), 'TIMESTAMP')
+    assert pySteve.infer_datatype('2024-01-15T07:59:40.053+00:00', True) ==(datetime, datetime(2024, 1, 15, 7, 59, 40, 53000, tzinfo=timezone(timedelta(seconds=0))), 'TIMESTAMP')
 
 
 def test_datatype_py2sql():
@@ -475,7 +489,7 @@ def test_notionapi_get_users():
 def test_notionapi_get_dataset_info():
     env = pySteve.envfile_load()
     apikey = pySteve.notion_get_api_key(envfile=env)
-    tablename, columns = pySteve.notionapi_get_dataset_info(apikey, env['NOTION_CRM_ACCOUNT'])
+    tablename, columns = pySteve.notionapi_get_dataset_info(apikey, env['NOTION_CRM_ACCOUNTS'])
     assert tablename.lower() == 'Accounts'.lower()
     assert len(columns) > 30
     assert [c for c in columns if c['notion_name']=='id'][0]['db_name'] == 'Account_id'
@@ -496,11 +510,24 @@ def test_notionapi_get_dataset():
     ethrow = [r for r in rows if r['Name']=='Ethereum'][0]['id']
     assert len([r for r in keypairs if r['RowID']==ethrow]) > 10
     assert [r for r in keypairs if r['RowID']==ethrow][0]['CellCount'] == len([r for r in keypairs if r['RowID']==ethrow])
-
     assert [c for c in columns if c['notion_name']=='id'][0]['db_name'] == 'Chain_id'
 
+    for notion_table, notion_id in {n:v for n,v in env.items() if n[:10] == 'NOTION_CRM'}.items():
+        tablename, rows, keypairs, columns = pySteve.notionapi_get_dataset(apikey, notion_id, 2000)
+        print(f'---------------------')
+        print(f'Notion Table : {tablename}')
+        print(f'EnvVar Table : {notion_table}')
+        print(f'Rows         : {len(rows)}')
+        print(f'Keypairs     : {len(keypairs)}')
+        print(f'Columns      : {len(columns)}')
+        assert f"NOTION_CRM_{tablename.upper().replace(' ','_')}" == notion_table
+        assert len(rows) > 0
+        assert len(keypairs) > 0
+        assert len(columns) > 0
+        if notion_table == 'NOTION_CRM_ACCOUNTS':
+            assert len(rows) > 101
 
 
 if __name__ == '__main__':
-    test_infer_datatype()
+    test_notionapi_get_dataset_info()
     pass
