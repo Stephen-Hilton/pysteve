@@ -977,7 +977,7 @@ def db_safe_name(original_column_name:str, reserved_word_prefix:str=None, **rese
             rtn = rtn.replace('__','_')
         return rtn 
     
-    colname = __safechars__(original_column_name).lower()
+    colname = __safechars__(original_column_name)
 
     # build reserved word list
     reserved_words = {n.lower():v for n,v in reserved_words.items() if n.lower() == colname.lower() }
