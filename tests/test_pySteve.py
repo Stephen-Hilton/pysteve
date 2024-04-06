@@ -381,6 +381,8 @@ def test_db_safe_name():
     assert pySteve.db_safe_name('parent', parent='Parent_ID', object="Object_Type") == 'Parent_ID'
     assert pySteve.db_safe_name('object', parent='Parent_ID', object="Object_Type") == 'Object_Type'
     assert pySteve.db_safe_name('OBJECT', parent='Parent_ID', object="Object_Type") == 'Object_Type'
+    # non-ascii characters
+    assert pySteve.db_safe_name('💰 Opportunities') == 'Opportunities'
 
 
 def test_generate_markdown_doc():
@@ -524,10 +526,12 @@ def test_notionapi_get_dataset():
         assert len(rows) > 0
         assert len(keypairs) > 0
         assert len(columns) > 0
+        assert '__notion_row_title__' in rows[0]
+        assert len(rows[0]['__notion_row_title__']) >0
         if notion_table == 'NOTION_CRM_ACCOUNTS':
             assert len(rows) > 101
 
 
 if __name__ == '__main__':
-    test_notionapi_get_dataset_info()
+    test_notionapi_get_dataset()
     pass
