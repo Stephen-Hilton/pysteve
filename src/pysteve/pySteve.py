@@ -1092,7 +1092,6 @@ def notion_translate_value(proptype, propobject) -> (str, list, bool):
         
     
 
-
 def notion_get_api_key(api_key:str=None, envfile='.') -> str:
     """
     Sets and/or returns the Notion API Key, either directly from from an envfile.
@@ -1193,7 +1192,11 @@ def notionapi_get_dataset_info(api_key:str, notion_id:str, **headers) -> (str,di
 
 def notionapi_get_dataset(api_key:str, notion_id:str, row_limit:int=-1, filter_json:dict = {}, **headers):
     """
-    Connect to Notion and retrieve a dataset (aka table, aka database) by NotionID. 
+    Connect to Notion with an API_Key, and retrieve a dataset (aka table, aka database) by NotionID, 
+    with optional row limit and filter.  Returns a set containing the name of the table, rows in a tabular
+    format (including all standard notion attributes like ID, Create_time, and __notion_row_title__), 
+    key/value pairs from cells with multiple entries (like multiselect) as descrete entries, and the 
+    column definitions.
 
     You must setup an Integration and add datasets, otherwise you'll get a "not authorized" error, even 
     with a valid API Key. For more information, see:  
@@ -1260,6 +1263,7 @@ def notionapi_get_dataset(api_key:str, notion_id:str, row_limit:int=-1, filter_j
             
             valstr, vallist, is_multiset = notion_translate_value(proptype, propvalue)
             newrow[propname] = valstr 
+            if proptype=='title': newrow['__notion_row_title__'] = valstr
 
             if is_multiset:
                 for val in vallist:

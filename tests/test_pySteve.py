@@ -526,10 +526,12 @@ def test_notionapi_get_dataset():
         assert len(rows) > 0
         assert len(keypairs) > 0
         assert len(columns) > 0
+        assert '__notion_row_title__' in rows[0]
+        assert len(rows[0]['__notion_row_title__']) >0
         if notion_table == 'NOTION_CRM_ACCOUNTS':
             assert len(rows) > 101
 
 
 if __name__ == '__main__':
-    test_db_safe_name()
+    test_notionapi_get_dataset()
     pass
